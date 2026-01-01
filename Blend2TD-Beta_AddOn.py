@@ -1,7 +1,7 @@
 # ---------------------- Addon info-----------------------
 
 bl_info = {
-    "name": "TD Scripts - POP Edition",
+    "name": "Blend2TD-Beta",
     "author": "Patrick Hartono (Based on Factory Settings v1.4.2)",
     "version": (1, 0, 0),
     "blender": (5, 0, 0),
@@ -9,7 +9,7 @@ bl_info = {
     "description": "Export to TouchDesigner with GPU-accelerated POP operators (Blender 5.0+, TD 2025+)",
     "warning": "Modified version - Based on Factory Settings TD Scripts v1.4.2. Requires Blender 5.0+ and TouchDesigner 2025.32050+",
     "doc_url": "",
-    "tracker_url": "https://www.patreon.com/factorysettings",
+    "tracker_url": "https://github.com/patrickhartono/Blend2TD",
     "category": "Import-Export",
 }
 
@@ -1710,19 +1710,19 @@ else:
     createdOp = parent(2).op(f'{object_name}')
     createdNull = parent(2).op(f'{object_name}_null')
     createdGEO = parent(2).op(f'{object_name}_GEO')
-    createdIn = parent(2).op(f'{createdGEO.name}/{object_name}_in')
-    createdPoint = parent(2).op(f'{createdGEO.name}/{object_name}_point')
-    createdTangents = parent(2).op(f'{createdGEO.name}/{object_name}_tangents')
-    createdBuffer = parent(2).op(f'{createdGEO.name}/{object_name}_buffer')
-    createdBufferNull = parent(2).op(f'{createdGEO.name}/{object_name}_null')
-    createdCallbacks = parent(2).op(f'{createdGEO.name}/{object_name}_buffer_callbacks')
-    createdPlayback = parent(2).op(f'{createdGEO.name}/{object_name}_playback')
+    createdIn = parent(2).op(f'{object_name}_GEO/{object_name}_in')
+    createdPoint = parent(2).op(f'{object_name}_GEO/{object_name}_point')
+    createdTangents = parent(2).op(f'{object_name}_GEO/{object_name}_tangents')
+    createdBuffer = parent(2).op(f'{object_name}_GEO/{object_name}_buffer')
+    createdBufferNull = parent(2).op(f'{object_name}_GEO/{object_name}_null')
+    createdCallbacks = parent(2).op(f'{object_name}_GEO/{object_name}_buffer_callbacks')
+    createdPlayback = parent(2).op(f'{object_name}_GEO/{object_name}_playback')
     pointsDat = parent(2).op(f'{object_name}_points')
     primsDat = parent(2).op(f'{object_name}_polygons')
     verticesDat = parent(2).op(f'{object_name}_vertices')
-    createdGLSL = parent(2).op(f'{createdGEO.name}/{object_name}_glsl')
-    createdVertex = parent(2).op(f'{createdGEO.name}/{createdGLSL.name}_vertex')
-    createdPixel = parent(2).op(f'{createdGEO.name}/{createdGLSL.name}_pixel')    
+    createdGLSL = parent(2).op(f'{object_name}_GEO/{object_name}_glsl')
+    createdVertex = parent(2).op(f'{object_name}_GEO/{object_name}_glsl_vertex')
+    createdPixel = parent(2).op(f'{object_name}_GEO/{object_name}_glsl_pixel')    
     
 pointsDat.clear()
 primsDat.clear()
