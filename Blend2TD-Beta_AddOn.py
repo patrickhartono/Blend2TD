@@ -128,7 +128,7 @@ class VIEW3D_OT_ScriptToClipboard(bpy.types.Operator):
         mat_name = str(material)
         mat_name = urlify(mat_name)
 
-# ---------------------- to TD script format-----------------------
+# ---------------------- to Blend2TD format-----------------------
 
         result = "#BLENDMATTOTD"        
         result += "\npbrName = '" +str(mat_name) + "'"
@@ -298,7 +298,7 @@ class CAMERA_OT_CameraToClipboard(bpy.types.Operator):
         
         
                 
-# ---------------------- to TD script format-----------------------
+# ---------------------- to Blend2TD format-----------------------
 
         result = "#BLENDCAMTOTD"
         result += "\nname = '" +cam_name + "'"
@@ -539,7 +539,7 @@ class MESH_OT_MeshToClipboard(bpy.types.Operator):
         verts_coords = verts_coords.tolist()
         
                 
-# ---------------------- to TD script format-----------------------
+# ---------------------- to Blend2TD format-----------------------
 
         result = "#BLENDMESHTOTD"
         result += '\nfrom collections import Counter'
@@ -686,7 +686,7 @@ class UV_OT_UVMapToClipboard(bpy.types.Operator):
         obj_name = urlify(obj_name)
         
                 
-# ---------------------- to TD script format-----------------------
+# ---------------------- to Blend2TD format-----------------------
 
         result = "#BLENDUVTOTD"
         result += '\nface_list = ' + str(face_list)
@@ -866,38 +866,7 @@ createdOp.par.primsdat = str(primsDat.name)
 # ---------------------- end Export UV-Map to clipboard class-----------------------
 
 
-# ---------------------- TD Cam to Blend class -----------------------
 
-class TD_CAM_TO_Blendscript(bpy.types.Operator):
-    bl_idname = 'tdcam.to_script'
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'TD Cam to Script'
-    bl_label = 'TD Cam to Script'
-    
-    def execute(self, context):
-        
-        # Get clipboard content
-        clipboard = bpy.context.window_manager.clipboard
-
-        # Split the clipboard content into lines
-        lines = clipboard.split('\n')
-
-        # Check if the first line matches the condition
-        if len(lines) > 0 and lines[0] == '#TDCAMTOBLEND':
-            # Execute the script
-            try:
-                exec(clipboard)
-            except Exception as e:
-                self.report({'ERROR'}, f"Script execution failed with error: {e}")
-                return {'CANCELLED'}
-        else:
-            self.report({'ERROR'}, "No script found")
-            return {'CANCELLED'}
-
-        return {'FINISHED'}
-        
-# ---------------------- end TD Cam to Blend class-----------------------
 
 # ---------------------- BETA FEATURES ------------------------------------
 
@@ -1114,7 +1083,7 @@ class BETA_OT_MultiMatPOP(bpy.types.Operator):
             
             
                     
-    # ---------------------- to TD script format-----------------------
+    # ---------------------- to Blend2TD format-----------------------
 
             result = "#BLENDMESHTOTD"
             result += '\nfrom collections import Counter'
@@ -1561,7 +1530,7 @@ class MESH_OT_AnimMeshToClipboard(bpy.types.Operator):
             anim_coords = array_3d.tolist()
             
                     
-    # ---------------------- to TD script format-----------------------
+    # ---------------------- to Blend2TD format-----------------------
 
             result = "#BLENDMESHTOTD"
             result += '\nfrom collections import Counter'
@@ -1822,37 +1791,26 @@ parent().unstore('*')
 class TDScriptsPanel:
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "TD Scripts"
+    bl_category = "Blend2TD"
 
 # Main panel class with dynamic tabs
 class TD_PT_MainPanel(bpy.types.Panel, TDScriptsPanel):
-    bl_label = "TD Scripts 1.4.2"
+    bl_label = "Blend2TD"
     
-    @staticmethod
-    def draw_tabs(context, layout):
-        # Draw tab headers
-        layout.prop(context.scene, "td_active_tab", expand=True)
-
     def draw(self, context):
         layout = self.layout
-        TD_PT_MainPanel.draw_tabs(context, layout)
-
-        layout.separator()
-
-        if context.scene.td_active_tab == 'EXPORT':
-            #row = layout().row
-            #row.alignment = 'CENTER'
-            layout.operator('mesh.to_script', text = 'Mesh', icon = 'OUTLINER_DATA_MESH')
-            layout.operator('uvmap.to_script', text = 'UV-Map', icon = 'GROUP_UVS')
-            layout.operator('export.to_script', text = 'Material', icon = 'MATERIAL')
-            layout.operator('camera.to_script', text = 'Camera', icon = 'VIEW_CAMERA')            
-            
-        elif context.scene.td_active_tab == 'IMPORT':
-            layout.operator('tdcam.to_script', text = 'Camera', icon = 'VIEW_CAMERA')
-            
-        elif context.scene.td_active_tab == 'BETA':
-            layout.operator('beta_multi_mat_pop.to_script', text='Export MultiMat POP', icon = 'OBJECT_DATAMODE')
-            layout.operator('animmesh.to_script', text='Export Animated POP', icon = 'OBJECT_DATAMODE')
+        
+        # Export features (Release version - Beta features commented out)
+        layout.operator('mesh.to_script', text = 'Mesh', icon = 'OUTLINER_DATA_MESH')
+        layout.operator('uvmap.to_script', text = 'UV-Map', icon = 'GROUP_UVS')
+        layout.operator('export.to_script', text = 'Material', icon = 'MATERIAL')
+        # layout.operator('camera.to_script', text = 'Camera', icon = 'VIEW_CAMERA')
+        
+        # BETA FEATURES - Commented out for release version
+        # layout.separator()
+        # layout.label(text="Beta Features:")
+        # layout.operator('beta_multi_mat_pop.to_script', text='Export MultiMat POP', icon = 'OBJECT_DATAMODE')
+        # layout.operator('animmesh.to_script', text='Export Animated POP', icon = 'OBJECT_DATAMODE')
                 
 
 # ---------------------- end Panel draw class-----------------------           
@@ -1864,28 +1822,28 @@ def register():
     bpy.utils.register_class(CAMERA_OT_CameraToClipboard)
     bpy.utils.register_class(MESH_OT_MeshToClipboard)
     bpy.utils.register_class(UV_OT_UVMapToClipboard)
-    bpy.utils.register_class(TD_CAM_TO_Blendscript)
     bpy.utils.register_class(TD_PT_MainPanel)
     bpy.utils.register_class(BETA_OT_MultiMatPOP)
     bpy.utils.register_class(MESH_OT_AnimMeshToClipboard)
 
-    bpy.types.Scene.td_active_tab = bpy.props.EnumProperty(
-    name="Tab",
-    description="Active tab",
-    items=[
-        ('EXPORT', "Export", "Export related operations"),
-        ('IMPORT', "Import", "Import related operations"),
-        ('BETA', "Beta", "Beta features and settings")
-    ],
-    default='EXPORT'
-    )
+
+    # BETA FEATURES - Tab system commented out for release version
+    # bpy.types.Scene.td_active_tab = bpy.props.EnumProperty(
+    # name="Tab",
+    # description="Active tab",
+    # items=[
+    #     ('EXPORT', "Export", "Export related operations"),
+    #     # BETA FEATURES - Commented out for release version
+    #     # ('BETA', "Beta", "Beta features and settings")
+    # ],
+    # default='EXPORT'
+    # )
 
 def unregister():
     bpy.utils.unregister_class(VIEW3D_OT_ScriptToClipboard)
     bpy.utils.unregister_class(CAMERA_OT_CameraToClipboard)
     bpy.utils.unregister_class(MESH_OT_MeshToClipboard)
     bpy.utils.unregister_class(UV_OT_UVMapToClipboard)
-    bpy.utils.unregister_class(TD_CAM_TO_Blendscript)
     bpy.utils.unregister_class(TD_PT_MainPanel)
     bpy.utils.unregister_class(BETA_OT_MultiMatPOP)
     bpy.utils.unregister_class(MESH_OT_AnimMeshToClipboard)
