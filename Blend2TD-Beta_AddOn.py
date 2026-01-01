@@ -1583,56 +1583,61 @@ class MESH_OT_AnimMeshToClipboard(bpy.types.Operator):
 
 if len(find_datto) == 0:
 
-    parent(2).create(dattoPOP, object_name)
-    createdOp = parent(2).op(f'{object_name}')
+    # Create dattoSOP first (not dattoPOP) to properly receive table DAT data
+    parent(2).create(dattoSOP, object_name)
+    createdSOP = parent(2).op(f'{object_name}')
 
-    createdOp.nodeX = parent().nodeX + parent().nodeWidth * 1.5
-    createdOp.nodeY = parent().nodeY
+    createdSOP.nodeX = parent().nodeX + parent().nodeWidth * 1.5
+    createdSOP.nodeY = parent().nodeY
+
+    # Create soptoPOP to convert SOP to POP for GPU acceleration
+    parent(2).create(soptoPOP, f'{object_name}_POP')
+    createdPOP = parent(2).op(f'{object_name}_POP')
+
+    createdPOP.nodeX = createdSOP.nodeX + createdSOP.nodeWidth * 1.5
+    createdPOP.nodeY = createdSOP.nodeY
+
+    # Connect dattoSOP to soptoPOP
+    createdPOP.par.sop = createdSOP.path
 
     parent(2).create(nullPOP, f'{object_name}_null')
     createdNull = parent(2).op(f'{object_name}_null')
 
-    createdNull.nodeX = parent().nodeX + parent().nodeWidth * 2.5
-    createdNull.nodeY = parent().nodeY
+    createdNull.nodeX = createdPOP.nodeX + createdPOP.nodeWidth * 1.5
+    createdNull.nodeY = createdPOP.nodeY
 
     parent(2).create(geometryCOMP, f'{object_name}_GEO')
     createdGEO = parent(2).op(f'{object_name}_GEO')
 
-    createdGEO.nodeX = parent().nodeX + parent().nodeWidth * 3.5
-    createdGEO.nodeY = parent().nodeY
+    createdGEO.nodeX = createdNull.nodeX + createdNull.nodeWidth * 1.5
+    createdGEO.nodeY = createdNull.nodeY
 
-    createdOp.outputConnectors[0].connect(createdNull)
+    createdPOP.outputConnectors[0].connect(createdNull)
 
     createdGEO.create(inPOP, f'{object_name}_in')
     createdIn = parent(2).op(f'{createdGEO.name}/{object_name}_in')
     createdGEO.op('torus1').destroy()
 
-    createdGEO.create(pointPOP, f'{object_name}_point')
-    createdPoint = parent(2).op(f'{createdGEO.name}/{object_name}_point')
-    createdPoint.par.attr0name = 'pointNum'
-    createdPoint.par.attr0value1.expr = 'me.inputPoint.index'
-    createdPoint.nodeX = createdIn.nodeX + createdIn.nodeWidth * 1.25
 
-    createdGEO.create(attributecreatePOP, f'{object_name}_tangents')
-    createdTangents = parent(2).op(f'{createdGEO.name}/{object_name}_tangents')
-    createdTangents.nodeX = createdPoint.nodeX + createdPoint.nodeWidth * 1.25
+    createdGEO.create(normalPOP, f'{object_name}_normal')
+    createdNormal = parent(2).op(f'{createdGEO.name}/{object_name}_normal')
+    createdNormal.nodeX = createdIn.nodeX + createdIn.nodeWidth * 1.25
     
     createdGEO.inputConnectors[0].connect(createdNull)
-    createdIn.outputConnectors[0].connect(createdPoint)
-    createdPoint.outputConnectors[0].connect(createdTangents)
+    createdIn.outputConnectors[0].connect(createdNormal)
     
-    createdTangents.render = 1
-    createdTangents.display = 1
-    createdTangents.par.comptang = 1
+    createdNormal.render = 1
+    createdNormal.display = 1
+    # Note: normalPOP computes tangents automatically, no parameter needed
     
     createdGEO.create(scriptTOP, f'{object_name}_buffer')
     createdBuffer = parent(2).op(f'{createdGEO.name}/{object_name}_buffer')
-    createdBuffer.nodeX = createdTangents.nodeX
-    createdBuffer.nodeY = createdTangents.nodeY + createdBuffer.nodeHeight * 1.25
+    createdBuffer.nodeX = createdNormal.nodeX
+    createdBuffer.nodeY = createdNormal.nodeY + createdBuffer.nodeHeight * 1.25
     
     createdGEO.create(nullTOP, f'{object_name}_buffer_null')
     createdBufferNull = parent(2).op(f'{createdGEO.name}/{object_name}_buffer_null')
-    createdBufferNull.nodeX = createdTangents.nodeX + createdBuffer.nodeWidth * 1.25
+    createdBufferNull.nodeX = createdNormal.nodeX + createdBuffer.nodeWidth * 1.25
     createdBufferNull.nodeY = createdBuffer.nodeY 
     
     createdBuffer.outputConnectors[0].connect(createdBufferNull)
@@ -1642,7 +1647,7 @@ if len(find_datto) == 0:
     
     createdGEO.create(textDAT, f'{object_name}_buffer_callbacks')
     createdCallbacks = parent(2).op(f'{createdGEO.name}/{object_name}_buffer_callbacks')
-    createdCallbacks.nodeX = createdPoint.nodeX 
+    createdCallbacks.nodeX = createdNormal.nodeX 
     createdCallbacks.nodeY = createdBuffer.nodeY 
     createdCallbacks.dock = createdBuffer
     createdCallbacks.showDocked = 0
@@ -1663,7 +1668,7 @@ def onCook(scriptOp):
 
     createdGEO.create(glslMAT, f'{object_name}_glsl')
     createdGLSL = parent(2).op(f'{createdGEO.name}/{object_name}_glsl')
-    createdGLSL.nodeX = createdTangents.nodeX + createdTangents.nodeWidth * 1.25
+    createdGLSL.nodeX = createdNormal.nodeX + createdNormal.nodeWidth * 1.25
 
     createdGLSL.par.vec0name = 'uPlayBack'
     createdGLSL.par.vec0valuex.expr = f"op('{createdPlayback.name}')[0]"
@@ -1683,36 +1688,36 @@ def onCook(scriptOp):
 
     parent(2).create(tableDAT, f'{object_name}_points')
     pointsDat = parent(2).op(f'{object_name}_points')
-    pointsDat.nodeX = createdOp.nodeX
-    pointsDat.nodeY = createdOp.nodeY - pointsDat.nodeHeight * 1.5
+    pointsDat.nodeX = createdSOP.nodeX
+    pointsDat.nodeY = createdSOP.nodeY - pointsDat.nodeHeight * 1.5
 
-    pointsDat.dock = createdOp
+    pointsDat.dock = createdSOP
     pointsDat.showDocked = 0
 
     parent(2).create(tableDAT, f'{object_name}_polygons')
     primsDat = parent(2).op(f'{object_name}_polygons')
-    primsDat.nodeX = createdOp.nodeX + primsDat.nodeWidth * 1.5
-    primsDat.nodeY = createdOp.nodeY - primsDat.nodeHeight * 1.5
+    primsDat.nodeX = createdSOP.nodeX + primsDat.nodeWidth * 1.5
+    primsDat.nodeY = createdSOP.nodeY - primsDat.nodeHeight * 1.5
 
-    primsDat.dock = createdOp
+    primsDat.dock = createdSOP
     primsDat.showDocked = 0
 
     parent(2).create(tableDAT, f'{object_name}_vertices')
     verticesDat = parent(2).op(f'{object_name}_vertices')
-    verticesDat.nodeX = createdOp.nodeX + verticesDat.nodeWidth * 3
-    verticesDat.nodeY = createdOp.nodeY - verticesDat.nodeHeight * 1.5
+    verticesDat.nodeX = createdSOP.nodeX + verticesDat.nodeWidth * 3
+    verticesDat.nodeY = createdSOP.nodeY - verticesDat.nodeHeight * 1.5
 
-    verticesDat.dock = createdOp
+    verticesDat.dock = createdSOP
     verticesDat.showDocked = 0
     
         
 else:
-    createdOp = parent(2).op(f'{object_name}')
+    createdSOP = parent(2).op(f'{object_name}')
+    createdPOP = parent(2).op(f'{object_name}_POP')
     createdNull = parent(2).op(f'{object_name}_null')
     createdGEO = parent(2).op(f'{object_name}_GEO')
     createdIn = parent(2).op(f'{object_name}_GEO/{object_name}_in')
-    createdPoint = parent(2).op(f'{object_name}_GEO/{object_name}_point')
-    createdTangents = parent(2).op(f'{object_name}_GEO/{object_name}_tangents')
+    createdNormal = parent(2).op(f'{object_name}_GEO/{object_name}_normal')
     createdBuffer = parent(2).op(f'{object_name}_GEO/{object_name}_buffer')
     createdBufferNull = parent(2).op(f'{object_name}_GEO/{object_name}_null')
     createdCallbacks = parent(2).op(f'{object_name}_GEO/{object_name}_buffer_callbacks')
@@ -1735,27 +1740,23 @@ createdPixel.clear()
 parent().store('mat_list', material_list)
 parent().store('animated', 1)
 
+# Insert headers FIRST, then append data
+pointsDat.insertRow(['index', 'P(0)','P(1)','P(2)','N(0)','N(1)','N(2)'])
 for x in pointsDatList:
     pointsDat.appendRow(x)
-pointsDat.insertRow(['index', 'P(0)','P(1)','P(2)','N(0)','N(1)','N(2)'])
 
+primsDat.insertRow(['index', 'vertices', 'close'])
 for x in primsDatList:
     primsDat.appendRow(x)
-primsDat.insertRow(['index', 'vertices', 'close'])
 
-for x in vertsDatList:
-    verticesDat.appendRow(x)
-
+# Build vertices header list
 verticesDatNameList = []
-
 verticesDatNameList.append('index')
 verticesDatNameList.append('vindex')
 
 if num_uvs > 0:
     for x in range(num_uvs):
         verticesDatNameList.append('Tex(' +str(int(x)) + ')')
-else:
-    pass
 
 if vert_col_num > 0:
     for x in range(4):
@@ -1763,15 +1764,15 @@ if vert_col_num > 0:
 
 if num_mats > 0:
     verticesDatNameList.append('attrib')
-else:
-    pass
-    
+
+# Insert header FIRST, then append data
 verticesDat.insertRow(verticesDatNameList)
+for x in vertsDatList:
+    verticesDat.appendRow(x)
     
-createdOp.par.pointsdat = str(pointsDat.name)
-createdOp.par.verticesdat = str(verticesDat.name)
-createdOp.par.primsdat = str(primsDat.name)
-createdOp.par.int = '*'
+createdSOP.par.pointsdat = str(pointsDat.name)
+createdSOP.par.verticesdat = str(verticesDat.name)
+createdSOP.par.primsdat = str(primsDat.name)
 
 
 # write to shader
