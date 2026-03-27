@@ -1,10 +1,6 @@
 in int attrib;
 in vec4 T;
 
-// POP Attributes (explicit declarations for clarity)
-in vec3 Tex[1];    // Texture coordinates from dattoPOP
-in vec4 Color;     // Vertex color from dattoPOP (optional)
-
 flat out int materialID;
 
 out Vertex
@@ -20,7 +16,6 @@ void main()
 {
 	materialID = attrib;
 
-		gl_PointSize = 1.0;
 	{ // Avoid duplicate variable defs
 		vec3 texcoord = TDInstanceTexCoord(uv[0]);
 		oVert.texCoord0.st = texcoord.st;

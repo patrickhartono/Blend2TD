@@ -977,13 +977,23 @@ class BETA_OT_MultiMatPOP(bpy.types.Operator):
             obj = obj.evaluated_get(dg) #collapse modifiers
             
             obj_data = obj.data
-            
+
+            # Triangulate mesh copy so calc_tangents() can run (requires tris/quads only)
+            _tri_bm = bmesh.new()
+            _tri_bm.from_mesh(obj_data)
+            bmesh.ops.triangulate(_tri_bm, faces=_tri_bm.faces[:])
+            obj_data = bpy.data.meshes.new("_blend2td_temp")
+            _tri_bm.to_mesh(obj_data)
+            _tri_bm.free()
+            obj_data.calc_tangents()
+
             bm = bmesh.new()
             bm.from_mesh(obj_data)
-            
+
             bm.transform(obj.matrix_world)
             
             matrix = axis_conversion(from_forward='-Y', from_up='Z',to_forward='Z',to_up='Y').to_4x4()
+            tangent_matrix = matrix.to_3x3() @ obj.matrix_world.to_3x3()
             # Use the matrix to transform all vertices
             
             face_vertex_material_ids = []
@@ -1030,7 +1040,7 @@ class BETA_OT_MultiMatPOP(bpy.types.Operator):
             num_materials = len(obj_data.materials)
 
             # Calculate the length of the array for each vertex.
-            length = 2 + 3*num_uv_layers + (4 if vertex_color_layer else 0) + (1 if num_materials else 0)
+            length = 2 + 3*num_uv_layers + 4 + (4 if vertex_color_layer else 0) + (1 if num_materials else 0)
 
             # Create an empty numpy array with shape (number of loop vertices, calculated length)
             vertsDatList = np.zeros((len(obj_data.loops), length), dtype=np.float32)
@@ -1058,6 +1068,11 @@ class BETA_OT_MultiMatPOP(bpy.types.Operator):
                         uv_coords = loop[uv_layer].uv
                         uv_coords_list.extend([uv_coords.x, uv_coords.y, 0.0])  # Appending the UVs and the 0.0 for 'w'
 
+
+                    # Append precomputed Mikktspace tangent T(0,1,2) + bitangent_sign T(3)
+                    mesh_loop = obj_data.loops[loop.index]
+                    t = tangent_matrix @ mesh_loop.tangent
+                    uv_coords_list.extend([t[0], t[1], t[2], float(mesh_loop.bitangent_sign)])
                     # Fetch vertex color data if the layer exists
                     if vertex_color_layer == 1:
                         col = loop[vc_layer]
@@ -1101,46 +1116,32 @@ class BETA_OT_MultiMatPOP(bpy.types.Operator):
 
 if len(find_datto) == 0:
 
-    parent(2).create(dattoPOP, object_name)
+    parent(2).create(dattoSOP, object_name)
     createdOp = parent(2).op(f'{object_name}')
 
     createdOp.nodeX = parent().nodeX + parent().nodeWidth * 1.5
     createdOp.nodeY = parent().nodeY
 
-    parent(2).create(nullPOP, f'{object_name}_null')
-    createdNull = parent(2).op(f'{object_name}_null')
-
-    createdNull.nodeX = parent().nodeX + parent().nodeWidth * 2.5
-    createdNull.nodeY = parent().nodeY
-
     parent(2).create(geometryCOMP, f'{object_name}_GEO')
     createdGEO = parent(2).op(f'{object_name}_GEO')
 
-    createdGEO.nodeX = parent().nodeX + parent().nodeWidth * 3.5
+    createdGEO.nodeX = parent().nodeX + parent().nodeWidth * 2.5
     createdGEO.nodeY = parent().nodeY
 
-    createdOp.outputConnectors[0].connect(createdNull)
-
-    createdGEO.create(inPOP, f'{object_name}_in')
+    createdGEO.create(inSOP, f'{object_name}_in')
     createdIn = parent(2).op(f'{createdGEO.name}/{object_name}_in')
     createdGEO.op('torus1').destroy()
 
-    createdGEO.create(attributecreatePOP, f'{object_name}_tangents')
-    createdTangents = parent(2).op(f'{createdGEO.name}/{object_name}_tangents')
-    createdTangents.nodeX = createdIn.nodeX + createdIn.nodeWidth * 1.25    
+    createdGEO.inputConnectors[0].connect(createdOp)
 
-    createdGEO.inputConnectors[0].connect(createdNull)
-    createdIn.outputConnectors[0].connect(createdTangents)
-
-    createdTangents.render = 1
-    createdTangents.display = 1
-    createdTangents.par.comptang = 1
+    createdIn.render = 1
+    createdIn.display = 1
 
     # if num_mats == 0
 
     createdGEO.create(glslMAT, f'{object_name}_glsl')
     createdGLSL = parent(2).op(f'{createdGEO.name}/{object_name}_glsl')
-    createdGLSL.nodeX = createdTangents.nodeX + createdTangents.nodeWidth * 1.25
+    createdGLSL.nodeX = createdIn.nodeX + createdIn.nodeWidth * 1.25
 
     createdVertex = parent(2).op(f'{createdGEO.name}/{createdGLSL.name}_vertex')
     createdVertex.showDocked = 0
@@ -1175,10 +1176,8 @@ if len(find_datto) == 0:
     
 else:
     createdOp = parent(2).op(f'{object_name}')
-    createdNull = parent(2).op(f'{object_name}_null')
     createdGEO = parent(2).op(f'{object_name}_GEO')
     createdIn = parent(2).op(f'{createdGEO.name}/{object_name}_in')
-    createdTangents = parent(2).op(f'{createdGEO.name}/{object_name}_tangents')
     pointsDat = parent(2).op(f'{object_name}_points')
     primsDat = parent(2).op(f'{object_name}_polygons')
     verticesDat = parent(2).op(f'{object_name}_vertices')
@@ -1217,9 +1216,12 @@ verticesDatNameList.append('vindex')
 
 if num_uvs > 0:
     for x in range(num_uvs):
-        verticesDatNameList.append('Tex(' +str(int(x)) + ')')
+        verticesDatNameList.append('uv(' +str(int(x)) + ')')
 else:
     pass
+
+for x in range(4):
+    verticesDatNameList.append('T(' +str(int(x)) + ')')
 
 if vert_col_num > 0:
     for x in range(4):
@@ -1235,7 +1237,7 @@ verticesDat.insertRow(verticesDatNameList)
 createdOp.par.pointsdat = str(pointsDat.name)
 createdOp.par.verticesdat = str(verticesDat.name)
 createdOp.par.primsdat = str(primsDat.name)
-createdOp.par.int = '*'
+createdOp.par.int = 'index vindex attrib'
 
 
 # write to shader
@@ -1521,7 +1523,7 @@ class MESH_OT_AnimMeshToClipboard(bpy.types.Operator):
                 
                 indexCounter += len(bm.verts) * 3
                 
-                bm.clear() 
+                bm.free()
             
             # Reshape the array
             array_3d = np.reshape(anim_coords, (textureWidth, textureWidth, 3))
@@ -1552,22 +1554,12 @@ class MESH_OT_AnimMeshToClipboard(bpy.types.Operator):
 
 if len(find_datto) == 0:
 
-    # Create dattoSOP first (not dattoPOP) to properly receive table DAT data
-    parent(2).create(dattoSOP, object_name)
-    createdSOP = parent(2).op(f'{object_name}')
+    # Create dattoPOP for direct POP particle data input
+    parent(2).create(dattoPOP, object_name)
+    createdPOP = parent(2).op(f'{object_name}')
 
-    createdSOP.nodeX = parent().nodeX + parent().nodeWidth * 1.5
-    createdSOP.nodeY = parent().nodeY
-
-    # Create soptoPOP to convert SOP to POP for GPU acceleration
-    parent(2).create(soptoPOP, f'{object_name}_POP')
-    createdPOP = parent(2).op(f'{object_name}_POP')
-
-    createdPOP.nodeX = createdSOP.nodeX + createdSOP.nodeWidth * 1.5
-    createdPOP.nodeY = createdSOP.nodeY
-
-    # Connect dattoSOP to soptoPOP
-    createdPOP.par.sop = createdSOP.path
+    createdPOP.nodeX = parent().nodeX + parent().nodeWidth * 1.5
+    createdPOP.nodeY = parent().nodeY
 
     parent(2).create(nullPOP, f'{object_name}_null')
     createdNull = parent(2).op(f'{object_name}_null')
@@ -1806,11 +1798,11 @@ class TD_PT_MainPanel(bpy.types.Panel, TDScriptsPanel):
         layout.operator('export.to_script', text = 'Material', icon = 'MATERIAL')
         # layout.operator('camera.to_script', text = 'Camera', icon = 'VIEW_CAMERA')
         
-        # BETA FEATURES - Commented out for release version
-        # layout.separator()
-        # layout.label(text="Beta Features:")
-        # layout.operator('beta_multi_mat_pop.to_script', text='Export MultiMat POP', icon = 'OBJECT_DATAMODE')
-        # layout.operator('animmesh.to_script', text='Export Animated POP', icon = 'OBJECT_DATAMODE')
+        # BETA FEATURES
+        layout.separator()
+        layout.label(text="Beta Features:")
+        layout.operator('beta_multi_mat_pop.to_script', text='Export MultiMat POP', icon = 'OBJECT_DATAMODE')
+        layout.operator('animmesh.to_script', text='Export Animated POP', icon = 'OBJECT_DATAMODE')
                 
 
 # ---------------------- end Panel draw class-----------------------           
