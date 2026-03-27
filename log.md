@@ -60,16 +60,6 @@ Update Blend2TD add-on: enable beta features (MultiMat POP, Animated Mesh), fix 
 - Auto-cleanup stale operators from previous exports
 - Naming: `{objectname}_{materialname}_{slotindex}` for disambiguation
 
-**Architecture:**
-```
-Per material:
-  dattoSOP_{obj}_{mat}_{idx} → soptoPOP_{obj}_{mat}_{idx}_POP → geometryCOMP_{obj}_{mat}_{idx}_GEO
-                                                                    ├─ inPOP
-                                                                    ├─ pbrMAT (assigned to geometryCOMP.par.material)
-                                                                    └─ texture TOPs per channel
-                                                                         moviefileinTOP → nullTOP
-```
-
 ### 7. Rewrite AnimMesh → PBR MAT approach
 
 **Blender side:**
@@ -83,14 +73,34 @@ Per material:
 - Animation frames stored in `dattoSOP.store('anim_frames', ...)`
 - Removed GLSL MAT, custom shaders, `CreateParPage`, `WriteToFragment`, `store`/`unstore` dependencies
 
-**Architecture:**
+### 8. Multi-Object Export (AnimMesh)
+- AnimMesh now loops over all selected mesh objects (`bpy.context.selected_objects` filtered to `MESH` type)
+- Each object's mesh is split per material, animation frames collected per object
+- Animation data mapped to per-material sub-meshes via `old_to_new` vertex re-indexing
+- TD script uses `obj_name` from each mat entry for pipeline naming: `{obj_name}_{mat_name}_{mat_idx}`
+
+### 9. Parent geometryCOMP Container (MultiMatPOP + AnimMesh)
+- Both operators now create a single parent `geometryCOMP` as container
+- All per-material pipelines (dattoSOP, soptoPOP, child geometryCOMPs) created **inside** the container
+- Mirrors how TD's FBX `fileinCOMP` structures imported models
+- Transform inheritance: move/rotate/scale parent = all children follow
+- Container named after object (MultiMatPOP) or active object (AnimMesh)
+
+**Architecture (current):**
 ```
-Per material:
-  dattoSOP → soptoPOP → geometryCOMP
-                           ├─ inPOP
-                           ├─ pbrMAT + texture TOPs
-                           ├─ lfoCHOP (playback)
-                           └─ chopExecuteDAT (updates pointsDat per frame)
+geometryCOMP "ModelName"                    ← parent container
+  ├─ dattoSOP_{mat0}                        ← inside container
+  │    └─ (docked tableDATs: points, polygons, vertices)
+  ├─ soptoPOP_{mat0}_POP
+  ├─ geometryCOMP_{mat0}_GEO               ← child, renders sub-mesh
+  │    ├─ inPOP
+  │    ├─ pbrMAT + texture TOPs
+  │    └─ lfoCHOP + chopExecuteDAT (AnimMesh only)
+  ├─ dattoSOP_{mat1}
+  ├─ soptoPOP_{mat1}_POP
+  ├─ geometryCOMP_{mat1}_GEO
+  │    └─ ...
+  └─ ...
 ```
 
 ---
@@ -107,6 +117,15 @@ Per material:
 - **Discovery**: User test PBR MAT bawaan TD — langsung bekerja dengan texture tanpa custom shader.
 - **Conclusion**: PBR MAT lebih simple, reliable, dan sudah handle lighting/PBR otomatis.
 
+### Performance issue: AnimMesh sangat slow di TouchDesigner
+- **Symptom**: Setelah export animated multi-object model, TD menjadi sangat lambat (tested on MacBook Pro 64GB RAM)
+- **Likely root cause**: `chopExecuteDAT` updates pointsDat per-vertex per-frame via Python loop — ini sangat lambat untuk high-poly models. Setiap frame, Python iterates semua vertices dan updates table cells satu per satu.
+- **Potential solutions**:
+  - [ ] Gunakan texture-based animation (scriptTOP + numpy buffer) instead of per-cell table update
+  - [ ] Batch update pointsDat via numpy array assignment instead of cell-by-cell loop
+  - [ ] Reduce animation data precision (float16 instead of float32)
+  - [ ] Consider CHOP-based animation pipeline instead of Python script
+
 ---
 
 ## TODO (Belum Dilakukan)
@@ -115,7 +134,16 @@ Per material:
 
 ### ~~Priority 2: Animated Mesh Export~~ ✅ DONE
 
-### Priority 3: Cleanup
+### ~~Priority 3: Multi-Object Export~~ ✅ DONE
+
+### ~~Priority 4: Parent Container COMP~~ ✅ DONE
+
+### Priority 5: Performance — AnimMesh playback optimization
+- [ ] Investigate texture-based vertex animation (GPU-side) vs current Python table update (CPU-side)
+- [ ] Profile chopExecuteDAT bottleneck — per-vertex Python loop is O(n) per frame
+- [ ] Consider GLSL vertex shader approach for animation deformation (texture lookup in shader)
+
+### Priority 6: Cleanup
 - [ ] Remove `scripts/vertexShader.glsl` dan `scripts/fragmentShader.glsl` — GLSL MAT sudah tidak dipakai
 - [ ] Remove `scripts/vertexShader_anim.py` — tidak dipakai lagi
 - [ ] Remove `scripts/fragmentShader.glsl` — tidak dipakai lagi
@@ -128,11 +156,11 @@ Per material:
 
 | File | Status |
 |---|---|
-| `Blend2TD-Beta_AddOn.py` | Modified — bug fixes, pipeline changes, UI enabled |
-| `scripts/vertexShader.glsl` | Modified — cleaned up for SOP pipeline |
-| `scripts/fragmentShader.glsl` | Unchanged |
+| `Blend2TD-Beta_AddOn.py` | Modified — bug fixes, pipeline rewrites, multi-object, container COMP |
+| `scripts/vertexShader.glsl` | Modified — cleaned up for SOP pipeline (now unused) |
+| `scripts/fragmentShader.glsl` | Unchanged (now unused) |
 | `scripts/IMPORT.py` | Unchanged |
-| `scripts/td_gen_geo.py` | Unchanged (will need update for PBR approach) |
+| `scripts/td_gen_geo.py` | Unchanged (now unused) |
 
 ---
 
@@ -145,16 +173,15 @@ Material Export: pbrMAT + moviefileinTOP + nullTOP (material only, no geometry)
 UV Export:      dattoSOP → baseCOMP(inSOP → geometryCOMP) → renderTOP
 ```
 
-### Target Architecture (MultiMat PBR)
+### Current Architecture (MultiMat + AnimMesh)
 ```
-Per material:
-  dattoSOP_{mat} → soptoPOP_{mat} → geometryCOMP_{mat}
-                                       ├─ inPOP
-                                       ├─ pbrMAT
-                                       └─ [textures folder]
-                                            ├─ Basecolormap → null
-                                            ├─ Normalmap → null
-                                            ├─ Roughnessmap → null
-                                            ├─ Metallicmap → null
-                                            └─ Emitmap → null
+geometryCOMP "ModelName" (parent container)
+  Per material:
+    dattoSOP_{mat} → soptoPOP_{mat} → geometryCOMP_{mat}
+                                         ├─ inPOP
+                                         ├─ pbrMAT
+                                         ├─ [texture TOPs per channel]
+                                         │    moviefileinTOP → nullTOP
+                                         └─ [AnimMesh only]
+                                              lfoCHOP → chopExecuteDAT
 ```

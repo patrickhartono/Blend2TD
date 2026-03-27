@@ -1074,6 +1074,19 @@ class BETA_OT_MultiMatPOP(bpy.types.Operator):
             result += '\nobject_name = ' + "'" + obj_name + "'"
             result += '\nper_mat_data = ' + str(per_mat_data)
             result += """\n
+# Create parent geometryCOMP as container
+container_name = f'{object_name}'
+find_container = parent(2).findChildren(name=container_name, type=geometryCOMP)
+if len(find_container) == 0:
+    parent(2).create(geometryCOMP, container_name)
+    ctr = parent(2).op(container_name)
+    ctr.nodeX = parent().nodeX + parent().nodeWidth * 1.5
+    ctr.nodeY = parent().nodeY
+    if ctr.op('torus1'):
+        ctr.op('torus1').destroy()
+else:
+    ctr = parent(2).op(container_name)
+
 y_offset = 0
 created_names = []
 
@@ -1090,54 +1103,50 @@ for mat in per_mat_data:
     created_names.append(pipeline_name)
 
     # --- Create or reuse dattoSOP + tableDATs ---
-    find_datto = parent(2).findChildren(name=pipeline_name)
+    find_datto = ctr.findChildren(name=pipeline_name)
 
     if len(find_datto) == 0:
-        parent(2).create(dattoSOP, pipeline_name)
-        createdOp = parent(2).op(pipeline_name)
+        ctr.create(dattoSOP, pipeline_name)
+        createdOp = ctr.op(pipeline_name)
 
-        createdOp.nodeX = parent().nodeX + parent().nodeWidth * 1.5
-        createdOp.nodeY = parent().nodeY - y_offset
+        createdOp.nodeX = 0
+        createdOp.nodeY = -y_offset
 
-        parent(2).create(tableDAT, f'{pipeline_name}_points')
-        pointsDat = parent(2).op(f'{pipeline_name}_points')
+        ctr.create(tableDAT, f'{pipeline_name}_points')
+        pointsDat = ctr.op(f'{pipeline_name}_points')
         pointsDat.nodeX = createdOp.nodeX
         pointsDat.nodeY = createdOp.nodeY - pointsDat.nodeHeight * 1.5
         pointsDat.dock = createdOp
         pointsDat.showDocked = 0
 
-        parent(2).create(tableDAT, f'{pipeline_name}_polygons')
-        primsDat = parent(2).op(f'{pipeline_name}_polygons')
+        ctr.create(tableDAT, f'{pipeline_name}_polygons')
+        primsDat = ctr.op(f'{pipeline_name}_polygons')
         primsDat.nodeX = createdOp.nodeX + primsDat.nodeWidth * 1.5
         primsDat.nodeY = createdOp.nodeY - primsDat.nodeHeight * 1.5
         primsDat.dock = createdOp
         primsDat.showDocked = 0
 
-        parent(2).create(tableDAT, f'{pipeline_name}_vertices')
-        verticesDat = parent(2).op(f'{pipeline_name}_vertices')
+        ctr.create(tableDAT, f'{pipeline_name}_vertices')
+        verticesDat = ctr.op(f'{pipeline_name}_vertices')
         verticesDat.nodeX = createdOp.nodeX + verticesDat.nodeWidth * 3
         verticesDat.nodeY = createdOp.nodeY - verticesDat.nodeHeight * 1.5
         verticesDat.dock = createdOp
         verticesDat.showDocked = 0
 
-        # --- Create geometryCOMP ---
-        geo_name = f'{pipeline_name}_GEO'
-        parent(2).create(geometryCOMP, geo_name)
-        createdGEO = parent(2).op(geo_name)
-
-        createdGEO.nodeX = createdOp.nodeX + createdOp.nodeWidth * 1.5
-        createdGEO.nodeY = createdOp.nodeY
-
-        # Create soptoPOP between dattoSOP and geometryCOMP
+        # soptoPOP between dattoSOP and geometryCOMP
         pop_name = f'{pipeline_name}_POP'
-        parent(2).create(soptoPOP, pop_name)
-        createdPOP = parent(2).op(pop_name)
+        ctr.create(soptoPOP, pop_name)
+        createdPOP = ctr.op(pop_name)
         createdPOP.par.sop = createdOp.path
         createdPOP.nodeX = createdOp.nodeX + createdOp.nodeWidth * 1.5
         createdPOP.nodeY = createdOp.nodeY
 
-        # Shift geometryCOMP further right
+        # geometryCOMP (child)
+        geo_name = f'{pipeline_name}_GEO'
+        ctr.create(geometryCOMP, geo_name)
+        createdGEO = ctr.op(geo_name)
         createdGEO.nodeX = createdPOP.nodeX + createdPOP.nodeWidth * 1.5
+        createdGEO.nodeY = createdPOP.nodeY
 
         createdGEO.create(inPOP, f'{pipeline_name}_in')
         createdIn = createdGEO.op(f'{pipeline_name}_in')
@@ -1150,11 +1159,11 @@ for mat in per_mat_data:
         createdIn.display = 1
 
     else:
-        createdOp = parent(2).op(pipeline_name)
-        createdGEO = parent(2).op(f'{pipeline_name}_GEO')
-        pointsDat = parent(2).op(f'{pipeline_name}_points')
-        primsDat = parent(2).op(f'{pipeline_name}_polygons')
-        verticesDat = parent(2).op(f'{pipeline_name}_vertices')
+        createdOp = ctr.op(pipeline_name)
+        createdGEO = ctr.op(f'{pipeline_name}_GEO')
+        pointsDat = ctr.op(f'{pipeline_name}_points')
+        primsDat = ctr.op(f'{pipeline_name}_polygons')
+        verticesDat = ctr.op(f'{pipeline_name}_vertices')
 
     # --- Populate tableDATs ---
     pointsDat.clear()
@@ -1247,32 +1256,30 @@ for mat in per_mat_data:
     y_offset += 300
 
 # --- Cleanup stale operators from previous exports ---
-existing_ops = parent(2).findChildren(name=f'{object_name}_*', type=dattoSOP)
+existing_ops = ctr.findChildren(name=f'{object_name}_*', type=dattoSOP)
 for old_op in existing_ops:
-    # Extract pipeline_name from dattoSOP name
     op_name = old_op.name
     if op_name not in created_names:
-        # Destroy associated operators
-        if parent(2).op(f'{op_name}_POP'):
-            parent(2).op(f'{op_name}_POP').destroy()
-        if parent(2).op(f'{op_name}_GEO'):
-            parent(2).op(f'{op_name}_GEO').destroy()
-        if parent(2).op(f'{op_name}_points'):
-            parent(2).op(f'{op_name}_points').destroy()
-        if parent(2).op(f'{op_name}_polygons'):
-            parent(2).op(f'{op_name}_polygons').destroy()
-        if parent(2).op(f'{op_name}_vertices'):
-            parent(2).op(f'{op_name}_vertices').destroy()
+        if ctr.op(f'{op_name}_POP'):
+            ctr.op(f'{op_name}_POP').destroy()
+        if ctr.op(f'{op_name}_GEO'):
+            ctr.op(f'{op_name}_GEO').destroy()
+        if ctr.op(f'{op_name}_points'):
+            ctr.op(f'{op_name}_points').destroy()
+        if ctr.op(f'{op_name}_polygons'):
+            ctr.op(f'{op_name}_polygons').destroy()
+        if ctr.op(f'{op_name}_vertices'):
+            ctr.op(f'{op_name}_vertices').destroy()
         old_op.destroy()
 
 """
-            
-            bpy.context.window_manager.clipboard = result        
-       
+
+            bpy.context.window_manager.clipboard = result
+
             self.report({'INFO'}, "Script copied to Clipboard")
-            
+
             bm.free()
-            
+
             return {'FINISHED'}
     
     
@@ -1297,44 +1304,11 @@ class MESH_OT_AnimMeshToClipboard(bpy.types.Operator):
                 self.report({'ERROR'}, "No object selected")
                 return {'CANCELLED'}
 
-                    # Get the active object
-            obj = bpy.context.active_object
-
-            # Check if the selected object has any materials
-            if not obj.material_slots:
-                self.report({'ERROR'}, "No material assigned to the selected object")
-                return {'CANCELLED'}
-            
-            # Check if any material has a Principled BSDF node
-            principled_found = False
-            for mat_slot in obj.material_slots:
-                if mat_slot.material and mat_slot.material.use_nodes:
-                    for node in mat_slot.material.node_tree.nodes:
-                        if node.type == 'BSDF_PRINCIPLED':
-                            principled_found = True
-                            break
-            
-            if not principled_found:
-                self.report({'ERROR'}, "Add material with a Principled BSDF node")
-                return {'CANCELLED'}
-
             def urlify(s):
-
-        # Remove all non-word characters (everything except numbers and letters)
                 s = re.sub(r"[^\w\s]", '', s)
-
-        # Replace all runs of whitespace with a single dash
                 s = re.sub(r"\s+", '_', s)
-
                 return s
-            
-            # Check if there's a selected object
-            obj = bpy.context.active_object
-            if obj is None:
-                self.report({'ERROR'}, "No object selected")
-                return {'CANCELLED'}
-            
-            
+
             def checkTex(input_socket):
                 """Recursively search for an image texture node starting from the input_socket."""
                 if input_socket.is_linked:
@@ -1342,34 +1316,49 @@ class MESH_OT_AnimMeshToClipboard(bpy.types.Operator):
                     if link.from_node.type == 'TEX_IMAGE':
                         return bpy.path.abspath(link.from_node.image.filepath)
                     else:
-                        # Check all input sockets of the linked node recursively
                         for input_socket in link.from_node.inputs:
                             tex_path = checkTex(input_socket)
                             if tex_path is not None:
                                 return tex_path
                 return None
-            
-            material_data_list = []
 
-            #check version Blender
             if bpy.app.version[0] >= 5:
                 emission = 'Emission Color'
             else:
                 emission = 'Emission'
 
-            for slot in obj.material_slots:
-                if slot.material:
-                    mat = slot.material
-                    if mat.use_nodes:
-                        for node in mat.node_tree.nodes:
+            matrix = axis_conversion(from_forward='-Y', from_up='Z',to_forward='Z',to_up='Y').to_4x4()
+            animLength = current_scene.frame_end - current_scene.frame_start + 1
+
+            # Filter selected objects to mesh only
+            mesh_objects = [o for o in bpy.context.selected_objects if o.type == 'MESH']
+            if not mesh_objects:
+                self.report({'ERROR'}, "No mesh objects selected")
+                return {'CANCELLED'}
+
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+            # Collect per_mat_data for ALL selected mesh objects
+            all_per_mat_data = []
+
+            for obj in mesh_objects:
+                # Skip objects without materials
+                if not obj.material_slots:
+                    continue
+
+                # Collect material data for this object
+                material_data_list = []
+                for slot in obj.material_slots:
+                    if slot.material and slot.material.use_nodes:
+                        for node in slot.material.node_tree.nodes:
                             if node.type == 'BSDF_PRINCIPLED':
-                                material_data = {}            
-                                material_data["name"] = urlify(mat.name)
+                                material_data = {}
+                                material_data["name"] = urlify(slot.material.name)
                                 material_data["basecolor_tex"] = checkTex(node.inputs['Base Color'])
                                 material_data["metallic_tex"] = checkTex(node.inputs['Metallic'])
                                 material_data["roughness_tex"] = checkTex(node.inputs['Roughness'])
                                 material_data["normal_tex"] = checkTex(node.inputs['Normal'])
-                                material_data["emitcolor_tex"] = checkTex(node.inputs[emission])                            
+                                material_data["emitcolor_tex"] = checkTex(node.inputs[emission])
                                 material_data["basecolor_r"] = node.inputs['Base Color'].default_value[0]
                                 material_data["basecolor_g"] = node.inputs['Base Color'].default_value[1]
                                 material_data["basecolor_b"] = node.inputs['Base Color'].default_value[2]
@@ -1381,153 +1370,167 @@ class MESH_OT_AnimMeshToClipboard(bpy.types.Operator):
                                 material_data["emitcolor_b"] = node.inputs[emission].default_value[2]
                                 material_data["emitcolor_a"] = node.inputs[emission].default_value[3]
                                 material_data["emitstrength"] = node.inputs['Emission Strength'].default_value
-                                
                                 material_data_list.append(material_data)
 
-                    
-            dg = bpy.context.evaluated_depsgraph_get()
-
-            obj = obj.evaluated_get(dg) #collapse modifiers
-
-            obj_data = obj.data
-
-            # Triangulate mesh for dattoSOP
-            _tri_bm = bmesh.new()
-            _tri_bm.from_mesh(obj_data)
-            bmesh.ops.triangulate(_tri_bm, faces=_tri_bm.faces[:])
-            obj_data = bpy.data.meshes.new("_blend2td_anim_temp")
-            _tri_bm.to_mesh(obj_data)
-            _tri_bm.free()
-
-            bm = bmesh.new()
-            bm.from_mesh(obj_data)
-
-            bm.transform(obj.matrix_world)
-
-            matrix = axis_conversion(from_forward='-Y', from_up='Z',to_forward='Z',to_up='Y').to_4x4()
-
-            for vert in bm.verts:
-                vert.co = matrix @ vert.co
-                vert.normal = matrix.to_3x3() @ vert.normal
-
-            bm.verts.ensure_lookup_table()
-            bm.faces.ensure_lookup_table()
-
-            bpy.ops.object.mode_set(mode='OBJECT')
-
-            obj_name = str(obj.name)
-            obj_name = urlify(obj_name)
-
-            uv_layer = bm.loops.layers.uv.active if bm.loops.layers.uv else None
-
-            animLength = current_scene.frame_end - current_scene.frame_start + 1
-            numVerts = len(bm.verts)
-
-            # Build per-material mesh data (same as MultiMatPOP)
-            per_mat_data = []
-
-            for mat_idx, slot in enumerate(obj.material_slots):
-                if not slot.material:
-                    continue
-
-                mat_faces = [f for f in bm.faces if f.material_index == mat_idx]
-                if not mat_faces:
-                    continue
-
-                old_to_new = {}
-                new_idx = 0
-                for face in mat_faces:
-                    for vert in face.verts:
-                        if vert.index not in old_to_new:
-                            old_to_new[vert.index] = new_idx
-                            new_idx += 1
-
-                pointsDatList = np.empty((len(old_to_new), 7), dtype=np.float32)
-                for old_i, new_i in old_to_new.items():
-                    v = bm.verts[old_i]
-                    pointsDatList[new_i] = [new_i, v.co[0], v.co[1], v.co[2],
-                                            v.normal[0], v.normal[1], v.normal[2]]
-
-                primsDatList = []
-                for new_face_idx, face in enumerate(mat_faces):
-                    verts_str = ' '.join(str(old_to_new[v.index]) for v in face.verts)
-                    primsDatList.append([new_face_idx, verts_str, 1])
-
-                vertsDatList = []
-                for new_face_idx, face in enumerate(mat_faces):
-                    for j, loop in enumerate(face.loops):
-                        if uv_layer:
-                            uv_coords = loop[uv_layer].uv
-                            vertsDatList.append([new_face_idx, j, uv_coords.x, uv_coords.y])
-                        else:
-                            vertsDatList.append([new_face_idx, j])
-
-                mat_name = urlify(slot.material.name)
-
-                per_mat_data.append({
-                    "mat_name": mat_name,
-                    "mat_idx": mat_idx,
-                    "mat_data": material_data_list[mat_idx] if mat_idx < len(material_data_list) else None,
-                    "points": pointsDatList.tolist(),
-                    "prims": primsDatList,
-                    "verts": vertsDatList,
-                    "has_uv": uv_layer is not None,
-                    "old_to_new": {int(k): int(v) for k, v in old_to_new.items()},
-                    "num_verts": len(old_to_new),
-                })
-
-            bm.free()
-
-            # Collect animation frames (all vertices, all frames)
-            all_anim_frames = []
-            for f in range(animLength):
-                current_scene.frame_set(current_scene.frame_start + f)
                 dg = bpy.context.evaluated_depsgraph_get()
-                anim_obj = obj.evaluated_get(dg)
-                anim_data = anim_obj.data
+                eval_obj = obj.evaluated_get(dg)
+                obj_data = eval_obj.data
 
-                anim_bm = bmesh.new()
-                anim_bm.from_mesh(anim_data)
-                anim_bm.transform(anim_obj.matrix_world)
+                # Triangulate
+                _tri_bm = bmesh.new()
+                _tri_bm.from_mesh(obj_data)
+                bmesh.ops.triangulate(_tri_bm, faces=_tri_bm.faces[:])
+                temp_mesh_name = f"_blend2td_anim_temp_{urlify(obj.name)}"
+                obj_data = bpy.data.meshes.new(temp_mesh_name)
+                _tri_bm.to_mesh(obj_data)
+                _tri_bm.free()
 
-                frame_positions = {}
-                for i, vert in enumerate(anim_bm.verts):
-                    co = matrix @ vert.co
-                    frame_positions[i] = [float(co[0]), float(co[1]), float(co[2])]
+                bm = bmesh.new()
+                bm.from_mesh(obj_data)
+                bm.transform(eval_obj.matrix_world)
 
-                all_anim_frames.append(frame_positions)
-                anim_bm.free()
+                for vert in bm.verts:
+                    vert.co = matrix @ vert.co
+                    vert.normal = matrix.to_3x3() @ vert.normal
 
-            # Build per-material animation data
-            for mat_entry in per_mat_data:
-                old_to_new = mat_entry["old_to_new"]
-                num_v = mat_entry["num_verts"]
-                mat_anim = []
-                for frame_positions in all_anim_frames:
-                    frame_data = [[0.0, 0.0, 0.0]] * num_v
+                bm.verts.ensure_lookup_table()
+                bm.faces.ensure_lookup_table()
+
+                obj_name = urlify(str(obj.name))
+                uv_layer = bm.loops.layers.uv.active if bm.loops.layers.uv else None
+
+                # Per-material mesh split
+                for mat_idx, slot in enumerate(obj.material_slots):
+                    if not slot.material:
+                        continue
+
+                    mat_faces = [f for f in bm.faces if f.material_index == mat_idx]
+                    if not mat_faces:
+                        continue
+
+                    old_to_new = {}
+                    new_idx = 0
+                    for face in mat_faces:
+                        for vert in face.verts:
+                            if vert.index not in old_to_new:
+                                old_to_new[vert.index] = new_idx
+                                new_idx += 1
+
+                    pointsDatList = np.empty((len(old_to_new), 7), dtype=np.float32)
                     for old_i, new_i in old_to_new.items():
-                        frame_data[new_i] = frame_positions[old_i]
-                    mat_anim.append(frame_data)
-                mat_entry["anim_frames"] = mat_anim
-                del mat_entry["old_to_new"]
+                        v = bm.verts[old_i]
+                        pointsDatList[new_i] = [new_i, v.co[0], v.co[1], v.co[2],
+                                                v.normal[0], v.normal[1], v.normal[2]]
 
-            # Clean up temp mesh
-            if "_blend2td_anim_temp" in bpy.data.meshes:
-                bpy.data.meshes.remove(bpy.data.meshes["_blend2td_anim_temp"])
+                    primsDatList = []
+                    for new_face_idx, face in enumerate(mat_faces):
+                        verts_str = ' '.join(str(old_to_new[v.index]) for v in face.verts)
+                        primsDatList.append([new_face_idx, verts_str, 1])
+
+                    vertsDatList = []
+                    for new_face_idx, face in enumerate(mat_faces):
+                        for j, loop in enumerate(face.loops):
+                            if uv_layer:
+                                uv_coords = loop[uv_layer].uv
+                                vertsDatList.append([new_face_idx, j, uv_coords.x, uv_coords.y])
+                            else:
+                                vertsDatList.append([new_face_idx, j])
+
+                    mat_name = urlify(slot.material.name)
+
+                    all_per_mat_data.append({
+                        "obj_name": obj_name,
+                        "mat_name": mat_name,
+                        "mat_idx": mat_idx,
+                        "mat_data": material_data_list[mat_idx] if mat_idx < len(material_data_list) else None,
+                        "points": pointsDatList.tolist(),
+                        "prims": primsDatList,
+                        "verts": vertsDatList,
+                        "has_uv": uv_layer is not None,
+                        "old_to_new": {int(k): int(v) for k, v in old_to_new.items()},
+                        "num_verts": len(old_to_new),
+                    })
+
+                bm.free()
+
+                # Collect animation frames for this object
+                all_anim_frames = []
+                for f in range(animLength):
+                    current_scene.frame_set(current_scene.frame_start + f)
+                    dg = bpy.context.evaluated_depsgraph_get()
+                    anim_obj = obj.evaluated_get(dg)
+                    anim_data = anim_obj.data
+
+                    anim_bm = bmesh.new()
+                    anim_bm.from_mesh(anim_data)
+                    anim_bm.transform(anim_obj.matrix_world)
+
+                    frame_positions = {}
+                    for i, vert in enumerate(anim_bm.verts):
+                        co = matrix @ vert.co
+                        frame_positions[i] = [float(co[0]), float(co[1]), float(co[2])]
+
+                    all_anim_frames.append(frame_positions)
+                    anim_bm.free()
+
+                # Map animation data to per-material sub-meshes for this object
+                for mat_entry in all_per_mat_data:
+                    if mat_entry["obj_name"] != obj_name:
+                        continue
+                    if "anim_frames" in mat_entry:
+                        continue
+                    old_to_new = mat_entry["old_to_new"]
+                    num_v = mat_entry["num_verts"]
+                    mat_anim = []
+                    for frame_positions in all_anim_frames:
+                        frame_data = [[0.0, 0.0, 0.0]] * num_v
+                        for old_i, new_i in old_to_new.items():
+                            frame_data[new_i] = frame_positions[old_i]
+                        mat_anim.append(frame_data)
+                    mat_entry["anim_frames"] = mat_anim
+
+                # Clean up temp mesh
+                if temp_mesh_name in bpy.data.meshes:
+                    bpy.data.meshes.remove(bpy.data.meshes[temp_mesh_name])
+
+            # Remove old_to_new from final data (not needed in TD)
+            for mat_entry in all_per_mat_data:
+                if "old_to_new" in mat_entry:
+                    del mat_entry["old_to_new"]
 
     # ---------------------- to Blend2TD format-----------------------
 
+            # Container name from active object or first selected
+            active_obj = bpy.context.active_object
+            if active_obj and active_obj.type == 'MESH':
+                container_label = urlify(str(active_obj.name))
+            else:
+                container_label = urlify(str(mesh_objects[0].name))
+
             result = "#BLENDMESHTOTD"
             result += '\nimport numpy as np'
-            result += '\nobject_name = ' + "'" + obj_name + "'"
+            result += '\ncontainer_name = ' + "'" + container_label + "'"
             result += '\nfps = ' + str(orig_fps)
             result += '\nanimLength = ' + str(animLength)
-            result += '\nper_mat_data = ' + str(per_mat_data)
+            result += '\nper_mat_data = ' + str(all_per_mat_data)
             result += """\n
+# Create parent geometryCOMP as container
+find_container = parent(2).findChildren(name=container_name, type=geometryCOMP)
+if len(find_container) == 0:
+    parent(2).create(geometryCOMP, container_name)
+    ctr = parent(2).op(container_name)
+    ctr.nodeX = parent().nodeX + parent().nodeWidth * 1.5
+    ctr.nodeY = parent().nodeY
+    if ctr.op('torus1'):
+        ctr.op('torus1').destroy()
+else:
+    ctr = parent(2).op(container_name)
+
 y_offset = 0
 created_names = []
 
 for mat in per_mat_data:
+    obj_name = mat['obj_name']
     mat_name = mat['mat_name']
     mat_idx = mat['mat_idx']
     mat_data = mat['mat_data']
@@ -1538,34 +1541,34 @@ for mat in per_mat_data:
     anim_frames = mat['anim_frames']
     num_verts = mat['num_verts']
 
-    pipeline_name = f'{object_name}_{mat_name}_{mat_idx}'
+    pipeline_name = f'{obj_name}_{mat_name}_{mat_idx}'
     created_names.append(pipeline_name)
 
-    find_datto = parent(2).findChildren(name=pipeline_name)
+    find_datto = ctr.findChildren(name=pipeline_name)
 
     if len(find_datto) == 0:
-        parent(2).create(dattoSOP, pipeline_name)
-        createdOp = parent(2).op(pipeline_name)
+        ctr.create(dattoSOP, pipeline_name)
+        createdOp = ctr.op(pipeline_name)
 
-        createdOp.nodeX = parent().nodeX + parent().nodeWidth * 1.5
-        createdOp.nodeY = parent().nodeY - y_offset
+        createdOp.nodeX = 0
+        createdOp.nodeY = -y_offset
 
-        parent(2).create(tableDAT, f'{pipeline_name}_points')
-        pointsDat = parent(2).op(f'{pipeline_name}_points')
+        ctr.create(tableDAT, f'{pipeline_name}_points')
+        pointsDat = ctr.op(f'{pipeline_name}_points')
         pointsDat.nodeX = createdOp.nodeX
         pointsDat.nodeY = createdOp.nodeY - pointsDat.nodeHeight * 1.5
         pointsDat.dock = createdOp
         pointsDat.showDocked = 0
 
-        parent(2).create(tableDAT, f'{pipeline_name}_polygons')
-        primsDat = parent(2).op(f'{pipeline_name}_polygons')
+        ctr.create(tableDAT, f'{pipeline_name}_polygons')
+        primsDat = ctr.op(f'{pipeline_name}_polygons')
         primsDat.nodeX = createdOp.nodeX + primsDat.nodeWidth * 1.5
         primsDat.nodeY = createdOp.nodeY - primsDat.nodeHeight * 1.5
         primsDat.dock = createdOp
         primsDat.showDocked = 0
 
-        parent(2).create(tableDAT, f'{pipeline_name}_vertices')
-        verticesDat = parent(2).op(f'{pipeline_name}_vertices')
+        ctr.create(tableDAT, f'{pipeline_name}_vertices')
+        verticesDat = ctr.op(f'{pipeline_name}_vertices')
         verticesDat.nodeX = createdOp.nodeX + verticesDat.nodeWidth * 3
         verticesDat.nodeY = createdOp.nodeY - verticesDat.nodeHeight * 1.5
         verticesDat.dock = createdOp
@@ -1573,16 +1576,16 @@ for mat in per_mat_data:
 
         # soptoPOP
         pop_name = f'{pipeline_name}_POP'
-        parent(2).create(soptoPOP, pop_name)
-        createdPOP = parent(2).op(pop_name)
+        ctr.create(soptoPOP, pop_name)
+        createdPOP = ctr.op(pop_name)
         createdPOP.par.sop = createdOp.path
         createdPOP.nodeX = createdOp.nodeX + createdOp.nodeWidth * 1.5
         createdPOP.nodeY = createdOp.nodeY
 
-        # geometryCOMP
+        # geometryCOMP (child)
         geo_name = f'{pipeline_name}_GEO'
-        parent(2).create(geometryCOMP, geo_name)
-        createdGEO = parent(2).op(geo_name)
+        ctr.create(geometryCOMP, geo_name)
+        createdGEO = ctr.op(geo_name)
         createdGEO.nodeX = createdPOP.nodeX + createdPOP.nodeWidth * 1.5
         createdGEO.nodeY = createdPOP.nodeY
 
@@ -1596,11 +1599,11 @@ for mat in per_mat_data:
         createdIn.display = 1
 
     else:
-        createdOp = parent(2).op(pipeline_name)
-        createdGEO = parent(2).op(f'{pipeline_name}_GEO')
-        pointsDat = parent(2).op(f'{pipeline_name}_points')
-        primsDat = parent(2).op(f'{pipeline_name}_polygons')
-        verticesDat = parent(2).op(f'{pipeline_name}_vertices')
+        createdOp = ctr.op(pipeline_name)
+        createdGEO = ctr.op(f'{pipeline_name}_GEO')
+        pointsDat = ctr.op(f'{pipeline_name}_points')
+        primsDat = ctr.op(f'{pipeline_name}_polygons')
+        verticesDat = ctr.op(f'{pipeline_name}_vertices')
 
     # --- Populate tableDATs ---
     pointsDat.clear()
@@ -1684,9 +1687,9 @@ for mat in per_mat_data:
         createdGEO.par.material = './' + pbr_name
 
     # --- Animation: store frames and create playback script ---
-    # Store animation data in parent storage
-    parent(2).op(pipeline_name).store('anim_frames', anim_frames)
-    parent(2).op(pipeline_name).store('num_verts', num_verts)
+    # Store animation data on dattoSOP
+    ctr.op(pipeline_name).store('anim_frames', anim_frames)
+    ctr.op(pipeline_name).store('num_verts', num_verts)
 
     # Playback LFO inside geometryCOMP
     lfo_name = f'{pipeline_name}_playback'
@@ -1708,8 +1711,8 @@ for mat in per_mat_data:
     animExec.par.chop = createdPlayback.path
     animExec.par.valuechange = True
 
-    points_path = parent(2).op(f'{pipeline_name}_points').path
-    datto_path = parent(2).op(pipeline_name).path
+    points_path = ctr.op(f'{pipeline_name}_points').path
+    datto_path = ctr.op(pipeline_name).path
 
     animExec.text = f\'\'\'import math
 def onValueChange(channel, sampleIndex, val, prev):
@@ -1732,32 +1735,32 @@ def onValueChange(channel, sampleIndex, val, prev):
     y_offset += 300
 
 # --- Cleanup stale operators ---
-existing_ops = parent(2).findChildren(name=f'{object_name}_*', type=dattoSOP)
-for old_op in existing_ops:
-    op_name = old_op.name
-    if op_name not in created_names:
-        if parent(2).op(f'{op_name}_POP'):
-            parent(2).op(f'{op_name}_POP').destroy()
-        if parent(2).op(f'{op_name}_GEO'):
-            parent(2).op(f'{op_name}_GEO').destroy()
-        if parent(2).op(f'{op_name}_points'):
-            parent(2).op(f'{op_name}_points').destroy()
-        if parent(2).op(f'{op_name}_polygons'):
-            parent(2).op(f'{op_name}_polygons').destroy()
-        if parent(2).op(f'{op_name}_vertices'):
-            parent(2).op(f'{op_name}_vertices').destroy()
-        old_op.destroy()
+obj_names = set(m['obj_name'] for m in per_mat_data)
+for oname in obj_names:
+    existing_ops = ctr.findChildren(name=f'{oname}_*', type=dattoSOP)
+    for old_op in existing_ops:
+        op_name = old_op.name
+        if op_name not in created_names:
+            if ctr.op(f'{op_name}_POP'):
+                ctr.op(f'{op_name}_POP').destroy()
+            if ctr.op(f'{op_name}_GEO'):
+                ctr.op(f'{op_name}_GEO').destroy()
+            if ctr.op(f'{op_name}_points'):
+                ctr.op(f'{op_name}_points').destroy()
+            if ctr.op(f'{op_name}_polygons'):
+                ctr.op(f'{op_name}_polygons').destroy()
+            if ctr.op(f'{op_name}_vertices'):
+                ctr.op(f'{op_name}_vertices').destroy()
+            old_op.destroy()
 
 """
-            
-            bpy.context.window_manager.clipboard = result        
-       
+
+            bpy.context.window_manager.clipboard = result
+
             self.report({'INFO'}, "Script copied to Clipboard")
-            
-            bm.free()
-            
+
             return {'FINISHED'}
-    
+
 # ---------------------- end Anim Mesh to clipboard class-----------------------
 
 # ---------------------- Panel draw class-----------------------
