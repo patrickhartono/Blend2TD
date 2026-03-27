@@ -86,7 +86,36 @@ Update Blend2TD add-on: enable beta features (MultiMat POP, Animated Mesh), fix 
 - Transform inheritance: move/rotate/scale parent = all children follow
 - Container named after object (MultiMatPOP) or active object (AnimMesh)
 
-**Architecture (current):**
+### 10. GPU Texture Vertex Animation — ATTEMPTED, REVERTED
+
+**Problem:** `chopExecuteDAT` sangat lambat untuk high-poly — O(n_verts) per frame Python loop.
+
+**Approach yang dicoba:**
+- Blender: flatten animation → 1D RGBA32F array, pack ke power-of-2 texture
+- TD: `scriptTOP` + numpy `copyNumpyArray()` → animation texture di GPU
+- `glslMAT` vertex shader: `texelFetch(sAnimBuffer, ...)` untuk animasi posisi per-vertex
+- Fragment shader: PBR manual (`TDLightingPBR` + `TDEnvLightingPBR`)
+- `lfoCHOP` + `constantCHOP` → `mergeCHOP` → glslMAT vecchop uniforms
+
+**Kenapa di-revert:**
+- Texture tidak muncul — lihat "AnimMesh texture tidak muncul" di Discovered Issues
+- Reverted ke commit `93cbae3` (pbrMAT + chopExecuteDAT — working state)
+
+**Current architecture (setelah revert):**
+
+MultiMatPOP (static):
+```
+geometryCOMP "ModelName"                    ← parent container
+  ├─ dattoSOP_{mat0}                        ← inside container
+  │    └─ (docked tableDATs: points, polygons, vertices)
+  ├─ soptoPOP_{mat0}_POP
+  ├─ geometryCOMP_{mat0}_GEO               ← child, renders sub-mesh
+  │    ├─ inPOP
+  │    └─ pbrMAT + texture TOPs
+  └─ ...
+```
+
+AnimMesh (animated, chopExecuteDAT):
 ```
 geometryCOMP "ModelName"                    ← parent container
   ├─ dattoSOP_{mat0}                        ← inside container
@@ -95,11 +124,8 @@ geometryCOMP "ModelName"                    ← parent container
   ├─ geometryCOMP_{mat0}_GEO               ← child, renders sub-mesh
   │    ├─ inPOP
   │    ├─ pbrMAT + texture TOPs
-  │    └─ lfoCHOP + chopExecuteDAT (AnimMesh only)
-  ├─ dattoSOP_{mat1}
-  ├─ soptoPOP_{mat1}_POP
-  ├─ geometryCOMP_{mat1}_GEO
-  │    └─ ...
+  │    ├─ lfoCHOP (sawtooth playback)
+  │    └─ chopExecuteDAT (updates pointsDat P(0)/P(1)/P(2) per frame)
   └─ ...
 ```
 
@@ -119,12 +145,18 @@ geometryCOMP "ModelName"                    ← parent container
 
 ### Performance issue: AnimMesh sangat slow di TouchDesigner
 - **Symptom**: Setelah export animated multi-object model, TD menjadi sangat lambat (tested on MacBook Pro 64GB RAM)
-- **Likely root cause**: `chopExecuteDAT` updates pointsDat per-vertex per-frame via Python loop — ini sangat lambat untuk high-poly models. Setiap frame, Python iterates semua vertices dan updates table cells satu per satu.
-- **Potential solutions**:
-  - [ ] Gunakan texture-based animation (scriptTOP + numpy buffer) instead of per-cell table update
-  - [ ] Batch update pointsDat via numpy array assignment instead of cell-by-cell loop
-  - [ ] Reduce animation data precision (float16 instead of float32)
-  - [ ] Consider CHOP-based animation pipeline instead of Python script
+- **Root cause**: `chopExecuteDAT` updates pointsDat per-vertex per-frame via Python loop — sangat lambat untuk high-poly models.
+- **Status**: Belum di-fix. GPU texture animation approach dicoba tapi di-revert (lihat Section 10).
+
+### AnimMesh texture tidak muncul saat GPU animation approach
+- **Root cause**: `soptoPOP` converts SOP → POP. POP hanya punya point attributes, bukan vertex (per-loop) attributes. UV dari `verticesdat` hilang setelah soptoPOP.
+- **Impact di glslMAT**: `in vec3 Tex[1]` selalu (0,0) → semua texture sample dari pixel (0,0).
+- **Potential fix**: Ganti pipeline ke `dattoSOP → geometryCOMP(inSOP + glslMAT)` — UV ter-preserve di SOP path. Belum diimplementasi karena approach di-revert dulu.
+
+### AnimMesh tangent tidak di-export (relevan untuk GPU approach)
+- **Root cause**: AnimMesh tidak export tangent data. `in vec4 T` di vertex shader = (0,0,0,0).
+- **Impact**: `TDCreateTBNMatrix` dengan zero tangent → degenerate TBN → normal mapping salah.
+- **Potential fix**: Fallback tangent dari `cross(normal, up)` di vertex shader, atau export tangent dari Blender.
 
 ---
 
@@ -139,9 +171,9 @@ geometryCOMP "ModelName"                    ← parent container
 ### ~~Priority 4: Parent Container COMP~~ ✅ DONE
 
 ### Priority 5: Performance — AnimMesh playback optimization
-- [ ] Investigate texture-based vertex animation (GPU-side) vs current Python table update (CPU-side)
-- [ ] Profile chopExecuteDAT bottleneck — per-vertex Python loop is O(n) per frame
-- [ ] Consider GLSL vertex shader approach for animation deformation (texture lookup in shader)
+- GPU texture approach dicoba (scriptTOP + glslMAT) tapi di-revert karena texture tidak muncul
+- Root cause texture issue: soptoPOP menghilangkan UV (lihat Discovered Issues)
+- **Next step**: Fix pipeline ke inSOP dulu, baru retry GPU texture animation
 
 ### Priority 6: Cleanup
 - [ ] Remove `scripts/vertexShader.glsl` dan `scripts/fragmentShader.glsl` — GLSL MAT sudah tidak dipakai
@@ -173,15 +205,25 @@ Material Export: pbrMAT + moviefileinTOP + nullTOP (material only, no geometry)
 UV Export:      dattoSOP → baseCOMP(inSOP → geometryCOMP) → renderTOP
 ```
 
-### Current Architecture (MultiMat + AnimMesh)
+### Current Architecture — MultiMatPOP (static)
 ```
 geometryCOMP "ModelName" (parent container)
   Per material:
     dattoSOP_{mat} → soptoPOP_{mat} → geometryCOMP_{mat}
                                          ├─ inPOP
                                          ├─ pbrMAT
-                                         ├─ [texture TOPs per channel]
+                                         └─ [texture TOPs per channel]
+                                              moviefileinTOP → nullTOP
+```
+
+### Current Architecture — AnimMesh (animated, chopExecuteDAT)
+```
+geometryCOMP "ModelName" (parent container)
+  Per material:
+    dattoSOP_{mat} → soptoPOP_{mat} → geometryCOMP_{mat}
+                                         ├─ inPOP
+                                         ├─ pbrMAT + [texture TOPs per channel]
                                          │    moviefileinTOP → nullTOP
-                                         └─ [AnimMesh only]
-                                              lfoCHOP → chopExecuteDAT
+                                         ├─ lfoCHOP (sawtooth playback)
+                                         └─ chopExecuteDAT (updates pointsDat per frame)
 ```
