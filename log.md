@@ -70,6 +70,29 @@ Per material:
                                                                          moviefileinTOP → nullTOP
 ```
 
+### 7. Rewrite AnimMesh → PBR MAT approach
+
+**Blender side:**
+- Same per-material split as MultiMatPOP
+- Collect animation positions per frame for all vertices
+- Map animation data through per-material vertex re-indexing (old_to_new)
+
+**TD side:**
+- Same pipeline as MultiMatPOP: `dattoSOP → soptoPOP → geometryCOMP(inPOP + pbrMAT + texture TOPs)`
+- Animation via `lfoCHOP` (sawtooth playback) + `chopExecuteDAT` that updates pointsDat P(0),P(1),P(2) each frame
+- Animation frames stored in `dattoSOP.store('anim_frames', ...)`
+- Removed GLSL MAT, custom shaders, `CreateParPage`, `WriteToFragment`, `store`/`unstore` dependencies
+
+**Architecture:**
+```
+Per material:
+  dattoSOP → soptoPOP → geometryCOMP
+                           ├─ inPOP
+                           ├─ pbrMAT + texture TOPs
+                           ├─ lfoCHOP (playback)
+                           └─ chopExecuteDAT (updates pointsDat per frame)
+```
+
 ---
 
 ## Discovered Issues (Root Cause Analysis)
@@ -90,15 +113,14 @@ Per material:
 
 ### ~~Priority 1: Rewrite MultiMatPOP — PBR MAT approach~~ ✅ DONE
 
-### Priority 2: Animated Mesh Export
-- [ ] Test animated mesh export (sudah fix bugs tapi belum di-test)
-- [ ] Verify `vertexShader_anim.py` compatibility dengan pipeline baru
-- [ ] Kemungkinan juga perlu switch ke PBR MAT approach
+### ~~Priority 2: Animated Mesh Export~~ ✅ DONE
 
 ### Priority 3: Cleanup
-- [ ] Remove `scripts/vertexShader.glsl` dan `scripts/fragmentShader.glsl` jika GLSL MAT sudah tidak dipakai
-- [ ] Update `scripts/td_gen_geo.py` — remove `CreateParPage` dan `WriteToFragment` jika sudah tidak dipakai, atau buat method baru untuk PBR MAT
-- [ ] Consider: rename operator dari "MultiMatPOP" ke nama yang lebih sesuai
+- [ ] Remove `scripts/vertexShader.glsl` dan `scripts/fragmentShader.glsl` — GLSL MAT sudah tidak dipakai
+- [ ] Remove `scripts/vertexShader_anim.py` — tidak dipakai lagi
+- [ ] Remove `scripts/fragmentShader.glsl` — tidak dipakai lagi
+- [ ] Update `scripts/td_gen_geo.py` — `CreateParPage` dan `WriteToFragment` sudah tidak dipakai, bisa di-remove
+- [ ] Consider: rename operator dari "MultiMatPOP" dan "AnimMesh" ke nama yang lebih sesuai
 
 ---
 
