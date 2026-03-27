@@ -44,6 +44,32 @@ Update Blend2TD add-on: enable beta features (MultiMat POP, Animated Mesh), fix 
 - `uv[0]` — standard TD UV attribute
 - Removed POP-specific code (`gl_PointSize`, POP comments)
 
+### 6. Rewrite MultiMatPOP → PBR MAT approach
+
+**Blender side:**
+- Auto-split mesh per `material_index` — each material gets its own sub-mesh
+- Filter faces, collect unique vertices, re-index from 0 per material
+- Export separate pointsDat/vertsDat/primsDat per material
+- Removed `calc_tangents()`, tangent export, vertex color export, material ID attribute
+- Simplified vertsDatList columns to `[index, vindex, uv(0), uv(1)]`
+
+**TD side:**
+- Per material creates: `dattoSOP → soptoPOP → geometryCOMP(inPOP + pbrMAT + texture TOPs)`
+- PBR MAT params: `basecolorr/g/b`, `metallic`, `roughness`, `emitr/g/b`, texture maps via `moviefileinTOP → nullTOP`
+- Removed all GLSL-related code: `glslMAT`, vertex/pixel shader DATs, `CreateParPage()`, `WriteToFragment()`, `store()`/`unstore()`
+- Auto-cleanup stale operators from previous exports
+- Naming: `{objectname}_{materialname}_{slotindex}` for disambiguation
+
+**Architecture:**
+```
+Per material:
+  dattoSOP_{obj}_{mat}_{idx} → soptoPOP_{obj}_{mat}_{idx}_POP → geometryCOMP_{obj}_{mat}_{idx}_GEO
+                                                                    ├─ inPOP
+                                                                    ├─ pbrMAT (assigned to geometryCOMP.par.material)
+                                                                    └─ texture TOPs per channel
+                                                                         moviefileinTOP → nullTOP
+```
+
 ---
 
 ## Discovered Issues (Root Cause Analysis)
@@ -62,38 +88,7 @@ Update Blend2TD add-on: enable beta features (MultiMat POP, Animated Mesh), fix 
 
 ## TODO (Belum Dilakukan)
 
-### Priority 1: Rewrite MultiMatPOP — PBR MAT approach
-
-**Konsep baru:**
-- Skip GLSL MAT, pakai PBR MAT bawaan TD
-- Single material: `dattoSOP → soptoPOP → geometryCOMP(inPOP + pbrMAT)`
-- Multi-material: auto-split mesh per material di Blender, setiap sub-mesh dapat pipeline sendiri
-
-**Blender side:**
-- [ ] Auto-split mesh per `material_index` di `execute()`
-- [ ] Untuk setiap material: filter faces, collect vertices, re-index
-- [ ] Export separate pointsDat/vertsDat/primsDat per material
-
-**TD side (result string):**
-- [ ] Untuk setiap material, create:
-  - `dattoSOP_{objname}_{matname}`
-  - `soptoPOP_{objname}_{matname}`
-  - `geometryCOMP_{objname}_{matname}`
-    - Inside: `inPOP` (bisa karena PBR MAT handle UV sendiri — PERLU VERIFIKASI)
-    - Inside: `pbrMAT` (copy logic dari `VIEW3D_OT_ScriptToClipboard`)
-    - Inside: texture TOPs (moviefileinTOP + nullTOP per texture channel)
-  - Assign `pbrMAT` ke `geometryCOMP.par.material`
-- [ ] Remove semua GLSL-related code (glslMAT, vertex/pixel DAT, custom shaders)
-- [ ] Remove dependency ke `td_gen_geo.py` (`CreateParPage`, `WriteToFragment`)
-
-**Perlu diverifikasi:**
-- [ ] Apakah `soptoPOP → geometryCOMP(inPOP)` + PBR MAT bisa texture? User claim bisa, tapi perlu confirm karena sebelumnya POP kehilangan UV.
-  - Kemungkinan: PBR MAT auto-generate UV dari point positions? Atau user test-nya pakai SOP langsung?
-- [ ] Exact PBR MAT parameter names di TD: `par.basecolormap`, `par.normalmap`, `par.metalmap`, `par.roughmap`, `par.emitmap`?
-
-**Reference — existing code yang bisa di-reuse:**
-- Material extraction: `VIEW3D_OT_ScriptToClipboard` (lines 36-185) — sudah create pbrMAT + texture TOPs
-- Mesh extraction: `MESH_OT_MeshToClipboard` (lines 460-631) — sudah create dattoSOP + soptoPOP + tableDATs
+### ~~Priority 1: Rewrite MultiMatPOP — PBR MAT approach~~ ✅ DONE
 
 ### Priority 2: Animated Mesh Export
 - [ ] Test animated mesh export (sudah fix bugs tapi belum di-test)

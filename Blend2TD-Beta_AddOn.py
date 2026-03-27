@@ -973,301 +973,297 @@ class BETA_OT_MultiMatPOP(bpy.types.Operator):
 
                     
             dg = bpy.context.evaluated_depsgraph_get()
-            
+
             obj = obj.evaluated_get(dg) #collapse modifiers
-            
+
             obj_data = obj.data
 
-            # Triangulate mesh copy so calc_tangents() can run (requires tris/quads only)
+            # Triangulate mesh for dattoSOP (TD requires triangulated meshes)
             _tri_bm = bmesh.new()
             _tri_bm.from_mesh(obj_data)
             bmesh.ops.triangulate(_tri_bm, faces=_tri_bm.faces[:])
             obj_data = bpy.data.meshes.new("_blend2td_temp")
             _tri_bm.to_mesh(obj_data)
             _tri_bm.free()
-            obj_data.calc_tangents()
 
             bm = bmesh.new()
             bm.from_mesh(obj_data)
 
             bm.transform(obj.matrix_world)
-            
-            matrix = axis_conversion(from_forward='-Y', from_up='Z',to_forward='Z',to_up='Y').to_4x4()
-            tangent_matrix = matrix.to_3x3() @ obj.matrix_world.to_3x3()
-            # Use the matrix to transform all vertices
-            
-            face_vertex_material_ids = []
-            num_mats = len(obj.material_slots)
 
-            for face in bm.faces:
-                mat_id = face.material_index
-                for vertex in face.verts:
-                    face_vertex_material_ids.append(mat_id)                 
-            
+            matrix = axis_conversion(from_forward='-Y', from_up='Z',to_forward='Z',to_up='Y').to_4x4()
+
             for vert in bm.verts:
                 vert.co = matrix @ vert.co
                 vert.normal = matrix.to_3x3() @ vert.normal
-            
-            verts_coords = np.empty((len(bm.verts), 7), dtype=np.float32)
-            
-                    
-            for i, vert in enumerate(bm.verts):
-                verts_coords[i][0] = int(i)
-                verts_coords[i][1] = vert.co[0]
-                verts_coords[i][2] = vert.co[1]
-                verts_coords[i][3] = vert.co[2]
-                verts_coords[i][4] = vert.normal[0]
-                verts_coords[i][5] = vert.normal[1]
-                verts_coords[i][6] = vert.normal[2]         
+
+            bm.verts.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
 
             bpy.ops.object.mode_set(mode='OBJECT')
 
             obj_name = str(obj.name)
             obj_name = urlify(obj_name)
-            
-            primsDatList = []
 
-            # Get the number of UV channels (which is number of UV layers multiplied by 3)
-            uv_channel_count = len(bm.loops.layers.uv) * 3
-            
-            # Get number of UV layers.
-            num_uv_layers = len(bpy.context.object.data.uv_layers)
+            uv_layer = bm.loops.layers.uv.active if bm.loops.layers.uv else None
 
-            # Get active vertex color layer if exists.
-            vertex_color_layer = 1 if len(obj_data.vertex_colors) > 0 else 0
+            # Split mesh per material
+            per_mat_data = []
 
-            # Check the number of materials.
-            num_materials = len(obj_data.materials)
+            for mat_idx, slot in enumerate(obj.material_slots):
+                if not slot.material:
+                    continue
 
-            # Calculate the length of the array for each vertex.
-            length = 2 + 3*num_uv_layers + 4 + (4 if vertex_color_layer else 0) + (1 if num_materials else 0)
+                # Filter faces for this material
+                mat_faces = [f for f in bm.faces if f.material_index == mat_idx]
+                if not mat_faces:
+                    continue
 
-            # Create an empty numpy array with shape (number of loop vertices, calculated length)
-            vertsDatList = np.zeros((len(obj_data.loops), length), dtype=np.float32)
-            
-            
-            
-            # If the active vertex color layer exists, fetch its name
-            if obj_data.vertex_colors:
-                active_vc_name = obj_data.vertex_colors.active.name
-                vc_layer = bm.loops.layers.color.get(active_vc_name)
-            else:
-                vc_layer = None
-            
-            loopCount = 0
-            
-            for i, face in enumerate(bm.faces):
-                vertices_str = ' '.join(str(vertex.index) for vertex in face.verts)
-                primsDatList.append([face.index, vertices_str, 1])
-                
-                
-                
-                for j, loop in enumerate(face.loops):
-                    uv_coords_list = []
-                    for uv_layer in bm.loops.layers.uv.values():
-                        uv_coords = loop[uv_layer].uv
-                        uv_coords_list.extend([uv_coords.x, uv_coords.y, 0.0])  # Appending the UVs and the 0.0 for 'w'
+                # Collect unique vertices and create re-index mapping
+                old_to_new = {}
+                new_idx = 0
+                for face in mat_faces:
+                    for vert in face.verts:
+                        if vert.index not in old_to_new:
+                            old_to_new[vert.index] = new_idx
+                            new_idx += 1
 
+                # Build pointsDatList for this material
+                pointsDatList = np.empty((len(old_to_new), 7), dtype=np.float32)
+                for old_i, new_i in old_to_new.items():
+                    v = bm.verts[old_i]
+                    pointsDatList[new_i] = [new_i, v.co[0], v.co[1], v.co[2],
+                                            v.normal[0], v.normal[1], v.normal[2]]
 
-                    # Append precomputed Mikktspace tangent T(0,1,2) + bitangent_sign T(3)
-                    mesh_loop = obj_data.loops[loop.index]
-                    t = tangent_matrix @ mesh_loop.tangent
-                    uv_coords_list.extend([t[0], t[1], t[2], float(mesh_loop.bitangent_sign)])
-                    # Fetch vertex color data if the layer exists
-                    if vertex_color_layer == 1:
-                        col = loop[vc_layer]
-                        color_data = [col[0], col[1], col[2], col[3]]  # RGBA
-                    else:
-                        color_data = []
-                    
-                    loopCount += 1
-                    
-                    verts_entry = [int(i), int(j)] + uv_coords_list + color_data
-                    
-                    for idx, value in enumerate(verts_entry):
-                        vertsDatList[loopCount -1][idx] = value
-                        
-                        
-            for idx, mat_id in enumerate(face_vertex_material_ids):
-                vertsDatList[idx][-1] = mat_id    
-            
-            verts_coords = verts_coords.tolist()
-            vertsDatList = vertsDatList.tolist()
-            
-            
-            
-            
-                    
+                # Build primsDatList for this material (re-indexed)
+                primsDatList = []
+                for new_face_idx, face in enumerate(mat_faces):
+                    verts_str = ' '.join(str(old_to_new[v.index]) for v in face.verts)
+                    primsDatList.append([new_face_idx, verts_str, 1])
+
+                # Build vertsDatList for this material
+                vertsDatList = []
+                for new_face_idx, face in enumerate(mat_faces):
+                    for j, loop in enumerate(face.loops):
+                        if uv_layer:
+                            uv_coords = loop[uv_layer].uv
+                            vertsDatList.append([new_face_idx, j, uv_coords.x, uv_coords.y])
+                        else:
+                            vertsDatList.append([new_face_idx, j])
+
+                mat_name = urlify(slot.material.name)
+
+                per_mat_data.append({
+                    "mat_name": mat_name,
+                    "mat_idx": mat_idx,
+                    "mat_data": material_data_list[mat_idx] if mat_idx < len(material_data_list) else None,
+                    "points": pointsDatList.tolist(),
+                    "prims": primsDatList,
+                    "verts": vertsDatList,
+                    "has_uv": uv_layer is not None,
+                })
+
+            # Clean up temp mesh
+            if "_blend2td_temp" in bpy.data.meshes:
+                bpy.data.meshes.remove(bpy.data.meshes["_blend2td_temp"])
+
     # ---------------------- to Blend2TD format-----------------------
 
             result = "#BLENDMESHTOTD"
-            result += '\nfrom collections import Counter'
-            result += '\nimport itertools'
             result += '\nimport numpy as np'
-            result += '\npointsDatList = np.array(' + str(verts_coords) + ')'
-            result += '\nprimsDatList = ' + str(primsDatList)
-            result += '\nvertsDatList = np.array(' + str(vertsDatList) + ')'
-            result += '\nobject_name = ' + "'" +obj_name + "'"
-            result += '\nmaterial_list = ' + str(material_data_list)
-            result += '\nnum_mats = ' + str(num_mats)
-            result += '\nnum_uvs = ' + str(uv_channel_count)
-            result += '\nvert_col_num = ' + str(vertex_color_layer)
-            result +="""\nfind_datto = parent(2).findChildren(name=object_name)
+            result += '\nobject_name = ' + "'" + obj_name + "'"
+            result += '\nper_mat_data = ' + str(per_mat_data)
+            result += """\n
+y_offset = 0
+created_names = []
 
-if len(find_datto) == 0:
+for mat in per_mat_data:
+    mat_name = mat['mat_name']
+    mat_idx = mat['mat_idx']
+    mat_data = mat['mat_data']
+    pointsDatList = mat['points']
+    primsDatList = mat['prims']
+    vertsDatList = mat['verts']
+    has_uv = mat['has_uv']
 
-    parent(2).create(dattoSOP, object_name)
-    createdOp = parent(2).op(f'{object_name}')
+    pipeline_name = f'{object_name}_{mat_name}_{mat_idx}'
+    created_names.append(pipeline_name)
 
-    createdOp.nodeX = parent().nodeX + parent().nodeWidth * 1.5
-    createdOp.nodeY = parent().nodeY
+    # --- Create or reuse dattoSOP + tableDATs ---
+    find_datto = parent(2).findChildren(name=pipeline_name)
 
-    parent(2).create(geometryCOMP, f'{object_name}_GEO')
-    createdGEO = parent(2).op(f'{object_name}_GEO')
+    if len(find_datto) == 0:
+        parent(2).create(dattoSOP, pipeline_name)
+        createdOp = parent(2).op(pipeline_name)
 
-    createdGEO.nodeX = parent().nodeX + parent().nodeWidth * 2.5
-    createdGEO.nodeY = parent().nodeY
+        createdOp.nodeX = parent().nodeX + parent().nodeWidth * 1.5
+        createdOp.nodeY = parent().nodeY - y_offset
 
-    createdGEO.create(inSOP, f'{object_name}_in')
-    createdIn = parent(2).op(f'{createdGEO.name}/{object_name}_in')
-    createdGEO.op('torus1').destroy()
+        parent(2).create(tableDAT, f'{pipeline_name}_points')
+        pointsDat = parent(2).op(f'{pipeline_name}_points')
+        pointsDat.nodeX = createdOp.nodeX
+        pointsDat.nodeY = createdOp.nodeY - pointsDat.nodeHeight * 1.5
+        pointsDat.dock = createdOp
+        pointsDat.showDocked = 0
 
-    createdGEO.inputConnectors[0].connect(createdOp)
+        parent(2).create(tableDAT, f'{pipeline_name}_polygons')
+        primsDat = parent(2).op(f'{pipeline_name}_polygons')
+        primsDat.nodeX = createdOp.nodeX + primsDat.nodeWidth * 1.5
+        primsDat.nodeY = createdOp.nodeY - primsDat.nodeHeight * 1.5
+        primsDat.dock = createdOp
+        primsDat.showDocked = 0
 
-    createdIn.render = 1
-    createdIn.display = 1
+        parent(2).create(tableDAT, f'{pipeline_name}_vertices')
+        verticesDat = parent(2).op(f'{pipeline_name}_vertices')
+        verticesDat.nodeX = createdOp.nodeX + verticesDat.nodeWidth * 3
+        verticesDat.nodeY = createdOp.nodeY - verticesDat.nodeHeight * 1.5
+        verticesDat.dock = createdOp
+        verticesDat.showDocked = 0
 
-    # if num_mats == 0
+        # --- Create geometryCOMP ---
+        geo_name = f'{pipeline_name}_GEO'
+        parent(2).create(geometryCOMP, geo_name)
+        createdGEO = parent(2).op(geo_name)
 
-    createdGEO.create(glslMAT, f'{object_name}_glsl')
-    createdGLSL = parent(2).op(f'{createdGEO.name}/{object_name}_glsl')
-    createdGLSL.nodeX = createdIn.nodeX + createdIn.nodeWidth * 1.25
+        createdGEO.nodeX = createdOp.nodeX + createdOp.nodeWidth * 1.5
+        createdGEO.nodeY = createdOp.nodeY
 
-    createdVertex = parent(2).op(f'{createdGEO.name}/{createdGLSL.name}_vertex')
-    createdVertex.showDocked = 0
-    createdPixel = parent(2).op(f'{createdGEO.name}/{createdGLSL.name}_pixel')
-    createdPixel.showDocked = 0
-    
-    createdGEO.op(f'{object_name}_glsl_info').showDocked = 0
+        # Create soptoPOP between dattoSOP and geometryCOMP
+        pop_name = f'{pipeline_name}_POP'
+        parent(2).create(soptoPOP, pop_name)
+        createdPOP = parent(2).op(pop_name)
+        createdPOP.par.sop = createdOp.path
+        createdPOP.nodeX = createdOp.nodeX + createdOp.nodeWidth * 1.5
+        createdPOP.nodeY = createdOp.nodeY
 
-    parent(2).create(tableDAT, f'{object_name}_points')
-    pointsDat = parent(2).op(f'{object_name}_points')
-    pointsDat.nodeX = createdOp.nodeX
-    pointsDat.nodeY = createdOp.nodeY - pointsDat.nodeHeight * 1.5
+        # Shift geometryCOMP further right
+        createdGEO.nodeX = createdPOP.nodeX + createdPOP.nodeWidth * 1.5
 
-    pointsDat.dock = createdOp
-    pointsDat.showDocked = 0
+        createdGEO.create(inPOP, f'{pipeline_name}_in')
+        createdIn = createdGEO.op(f'{pipeline_name}_in')
+        if createdGEO.op('torus1'):
+            createdGEO.op('torus1').destroy()
 
-    parent(2).create(tableDAT, f'{object_name}_polygons')
-    primsDat = parent(2).op(f'{object_name}_polygons')
-    primsDat.nodeX = createdOp.nodeX + primsDat.nodeWidth * 1.5
-    primsDat.nodeY = createdOp.nodeY - primsDat.nodeHeight * 1.5
+        createdGEO.inputConnectors[0].connect(createdPOP)
 
-    primsDat.dock = createdOp
-    primsDat.showDocked = 0
+        createdIn.render = 1
+        createdIn.display = 1
 
-    parent(2).create(tableDAT, f'{object_name}_vertices')
-    verticesDat = parent(2).op(f'{object_name}_vertices')
-    verticesDat.nodeX = createdOp.nodeX + verticesDat.nodeWidth * 3
-    verticesDat.nodeY = createdOp.nodeY - verticesDat.nodeHeight * 1.5
+    else:
+        createdOp = parent(2).op(pipeline_name)
+        createdGEO = parent(2).op(f'{pipeline_name}_GEO')
+        pointsDat = parent(2).op(f'{pipeline_name}_points')
+        primsDat = parent(2).op(f'{pipeline_name}_polygons')
+        verticesDat = parent(2).op(f'{pipeline_name}_vertices')
 
-    verticesDat.dock = createdOp
-    verticesDat.showDocked = 0
-    
-else:
-    createdOp = parent(2).op(f'{object_name}')
-    createdGEO = parent(2).op(f'{object_name}_GEO')
-    createdIn = parent(2).op(f'{createdGEO.name}/{object_name}_in')
-    pointsDat = parent(2).op(f'{object_name}_points')
-    primsDat = parent(2).op(f'{object_name}_polygons')
-    verticesDat = parent(2).op(f'{object_name}_vertices')
-    createdGLSL = parent(2).op(f'{createdGEO.name}/{object_name}_glsl')
-    createdVertex = parent(2).op(f'{createdGEO.name}/{createdGLSL.name}_vertex')
-    createdPixel = parent(2).op(f'{createdGEO.name}/{createdGLSL.name}_pixel')
-    
-    
-    
-pointsDat.clear()
-primsDat.clear()
-verticesDat.clear()
-createdGEO.destroyCustomPars()
+    # --- Populate tableDATs ---
+    pointsDat.clear()
+    primsDat.clear()
+    verticesDat.clear()
 
-createdVertex.clear()
-createdPixel.clear()
+    for x in pointsDatList:
+        pointsDat.appendRow(x)
+    pointsDat.insertRow(['index', 'P(0)', 'P(1)', 'P(2)', 'N(0)', 'N(1)', 'N(2)'])
 
-parent().store('mat_list', material_list)
-parent().store('animated', 'False')
+    for x in primsDatList:
+        primsDat.appendRow(x)
+    primsDat.insertRow(['index', 'vertices', 'close'])
 
-for x in pointsDatList:
-    pointsDat.appendRow(x)
-pointsDat.insertRow(['index', 'P(0)','P(1)','P(2)','N(0)','N(1)','N(2)'])
+    for x in vertsDatList:
+        verticesDat.appendRow(x)
+    if has_uv:
+        verticesDat.insertRow(['index', 'vindex', 'uv(0)', 'uv(1)'])
+    else:
+        verticesDat.insertRow(['index', 'vindex'])
 
-for x in primsDatList:
-    primsDat.appendRow(x)
-primsDat.insertRow(['index', 'vertices', 'close'])
+    createdOp.par.pointsdat = str(pointsDat.name)
+    createdOp.par.verticesdat = str(verticesDat.name)
+    createdOp.par.primsdat = str(primsDat.name)
 
-for x in vertsDatList:
-    verticesDat.appendRow(x)
+    # --- Create pbrMAT inside geometryCOMP ---
+    if mat_data is not None:
+        pbr_name = f'{mat_name}_PBR'
 
-verticesDatNameList = []
+        if not createdGEO.op(pbr_name):
+            createdGEO.create(pbrMAT, pbr_name)
+        matOp = createdGEO.op(pbr_name)
+        matOp.nodeX = 400
+        matOp.nodeY = 0
 
-verticesDatNameList.append('index')
-verticesDatNameList.append('vindex')
+        # Set base color
+        matOp.par.basecolorr = mat_data['basecolor_r']
+        matOp.par.basecolorg = mat_data['basecolor_g']
+        matOp.par.basecolorb = mat_data['basecolor_b']
 
-if num_uvs > 0:
-    for x in range(num_uvs):
-        verticesDatNameList.append('uv(' +str(int(x)) + ')')
-else:
-    pass
+        # Set metallic and roughness
+        matOp.par.metallic = mat_data['metallic']
+        matOp.par.roughness = mat_data['roughness']
 
-for x in range(4):
-    verticesDatNameList.append('T(' +str(int(x)) + ')')
+        # Set emission color (multiplied by emission strength)
+        emit_str = mat_data.get('emitstrength', 1.0)
+        matOp.par.emitr = mat_data['emitcolor_r'] * emit_str
+        matOp.par.emitg = mat_data['emitcolor_g'] * emit_str
+        matOp.par.emitb = mat_data['emitcolor_b'] * emit_str
 
-if vert_col_num > 0:
-    for x in range(4):
-        verticesDatNameList.append('Color(' + str(int(x)) + ')')
+        # Create texture TOPs for each channel that has a texture path
+        tex_channels = [
+            ('basecolor_tex', 'basecolor', 'basecolormap'),
+            ('metallic_tex', 'metallic', 'metallicmap'),
+            ('roughness_tex', 'roughness', 'roughnessmap'),
+            ('normal_tex', 'normal', 'normalmap'),
+            ('emitcolor_tex', 'emit', 'emitmap'),
+        ]
 
-if num_mats > 0:
-    verticesDatNameList.append('attrib')
-else:
-    pass
-    
-verticesDat.insertRow(verticesDatNameList)
-    
-createdOp.par.pointsdat = str(pointsDat.name)
-createdOp.par.verticesdat = str(verticesDat.name)
-createdOp.par.primsdat = str(primsDat.name)
-createdOp.par.int = 'index vindex attrib'
+        tex_count = 0
+        for tex_key, tex_prefix, par_name in tex_channels:
+            tex_path = mat_data.get(tex_key)
+            if tex_path:
+                mfi_name = f'{tex_prefix}_{mat_name}'
+                null_name = f'{tex_prefix}_{mat_name}_null'
 
+                if not createdGEO.op(mfi_name):
+                    createdGEO.create(moviefileinTOP, mfi_name)
+                mfi_op = createdGEO.op(mfi_name)
+                mfi_op.par.file = tex_path
 
-# write to shader
-createdVertex.write(op('vertexShader').text)
-parent().WriteToFragment(createdPixel)
+                if not createdGEO.op(null_name):
+                    createdGEO.create(nullTOP, null_name)
+                null_op = createdGEO.op(null_name)
 
-createdGEO.par.material = './' + str(createdGLSL.name)
+                mfi_op.outputConnectors[0].connect(null_op)
 
-names = [material['name'] for material in material_list]
+                mfi_op.nodeX = 400
+                mfi_op.nodeY = 200 + tex_count * 200
+                null_op.nodeX = mfi_op.nodeX + mfi_op.nodeWidth * 1.5
+                null_op.nodeY = mfi_op.nodeY
 
-createdGLSL.par.sampler0.sequence.numBlocks = 1
+                setattr(matOp.par, par_name, null_op.name)
 
-for id, material in enumerate(names):
-    parent().CreateParPage(str(object_name), material, id, id+id)
-    
-op('offset').par.value0 = 0
-op('offset').par.value1 = 0
+                tex_count += 1
 
-existingMaterials = createdGEO.findChildren(type=baseCOMP)
-compareList = []
+        # Assign pbrMAT to geometryCOMP
+        createdGEO.par.material = './' + pbr_name
 
-for x in existingMaterials:
-    compareList.append(x.name)    
+    y_offset += 300
 
-destroyList = set(names) ^ set(compareList)
-
-for x in destroyList:
-    createdGEO.op(f'{x}').destroy()
-    
-parent().unstore('*')
+# --- Cleanup stale operators from previous exports ---
+existing_ops = parent(2).findChildren(name=f'{object_name}_*', type=dattoSOP)
+for old_op in existing_ops:
+    # Extract pipeline_name from dattoSOP name
+    op_name = old_op.name
+    if op_name not in created_names:
+        # Destroy associated operators
+        if parent(2).op(f'{op_name}_POP'):
+            parent(2).op(f'{op_name}_POP').destroy()
+        if parent(2).op(f'{op_name}_GEO'):
+            parent(2).op(f'{op_name}_GEO').destroy()
+        if parent(2).op(f'{op_name}_points'):
+            parent(2).op(f'{op_name}_points').destroy()
+        if parent(2).op(f'{op_name}_polygons'):
+            parent(2).op(f'{op_name}_polygons').destroy()
+        if parent(2).op(f'{op_name}_vertices'):
+            parent(2).op(f'{op_name}_vertices').destroy()
+        old_op.destroy()
 
 """
             
